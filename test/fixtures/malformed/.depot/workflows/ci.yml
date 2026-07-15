@@ -1,0 +1,7 @@
+name: Malformed
+on: workflow_dispatch
+jobs:
+  build:
+    runs-on: [depot-ubuntu-latest
+    steps:
+      - run: make build

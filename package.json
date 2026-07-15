@@ -1,5 +1,5 @@
 {
-  "name": "depot",
+  "name": "depotci",
   "version": "0.1.0",
   "type": "module",
   "private": true,
@@ -8,7 +8,8 @@
     "test": "npm run build && tsx --test test/*.test.ts"
   },
   "dependencies": {
-    "@adversarylabs/sdk": "^0.1.4"
+    "@adversarylabs/sdk": "^0.1.4",
+    "yaml": "^2.8.1"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

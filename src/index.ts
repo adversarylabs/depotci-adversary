@@ -1,13 +1,24 @@
 #!/usr/bin/env node
 
 import { Adversary } from "@adversarylabs/sdk";
+import { analyzeRepository } from "./analyze.js";
+import { inspectRepository } from "./context.js";
+import { discoverDepotWorkflows } from "./discover.js";
+import { registerDepotRules } from "./rules/definitions.js";
 
 export function createApp(): Adversary {
-  const app = new Adversary({ name: "depot" });
+  const app = new Adversary({
+    name: "depotci",
+    version: "0.1.0",
+    review: { maximumFindings: 8 },
+  });
+  registerDepotRules(app);
 
-  app.rule("depot.review", (ctx) => {
-    // Detection is intentionally left for a later implementation.
-    ctx.summary.files_scanned = 0;
+  app.rule("depotci.review", async (ctx) => {
+    const discovery = await discoverDepotWorkflows(ctx.repoPath);
+    const repository = await inspectRepository(ctx.repoPath, discovery.repositoryFiles);
+    ctx.summary.files_scanned = discovery.candidates.length;
+    analyzeRepository(ctx, discovery, repository);
   });
 
   return app;

@@ -1,0 +1,3 @@
+project: example
+cache:
+  policy: shared

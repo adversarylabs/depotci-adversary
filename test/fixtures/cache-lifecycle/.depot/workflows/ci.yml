@@ -1,0 +1,14 @@
+name: Restore only
+on: workflow_dispatch
+permissions:
+  contents: read
+jobs:
+  dependencies:
+    runs-on: depot-ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/cache/restore@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-npm-${{ hashFiles('**/package-lock.json') }}
+      - run: npm ci

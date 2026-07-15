@@ -1,0 +1,11 @@
+name: Masked test
+on: workflow_dispatch
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: depot-ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Required tests
+        run: npm test || true

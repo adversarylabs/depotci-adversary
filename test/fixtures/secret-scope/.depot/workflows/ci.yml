@@ -1,0 +1,11 @@
+name: Broad secret
+on: workflow_dispatch
+permissions:
+  contents: read
+env:
+  DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
+jobs:
+  inspect:
+    runs-on: depot-ubuntu-latest
+    steps:
+      - run: echo "inspection"

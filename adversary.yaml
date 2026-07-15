@@ -1,11 +1,17 @@
-name: depot
+name: depotci
 version: 0.1.0
-description: Runs Depot CI workflow reviews; detection rules are not implemented yet.
+description: Reviews Depot CI workflows for security, correctness, reliability, caching, and performance concerns.
 
 triggers:
   manual: true
   files_changed:
     - ".depot/workflows/**"
+    - ".depot/**/*.yml"
+    - ".depot/**/*.yaml"
+    - "depot.yml"
+    - "depot.yaml"
+    - "depot-*.yml"
+    - "depot-*.yaml"
 
 runtime:
   name: node
@@ -18,8 +24,7 @@ permissions:
   filesystem:
     read:
       - .
-    write:
-      - .adversary/results
+    write: []
   network: false
   environment:
     allow: []

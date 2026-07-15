@@ -1,0 +1,11 @@
+name: No cancellation
+on:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: depot-ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - run: make build

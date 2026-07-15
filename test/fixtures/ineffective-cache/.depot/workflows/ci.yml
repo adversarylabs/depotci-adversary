@@ -1,0 +1,14 @@
+name: Ineffective cache
+on: workflow_dispatch
+permissions:
+  contents: read
+jobs:
+  dependencies:
+    runs-on: depot-ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/cache@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        with:
+          path: ~/.npm
+          key: npm-${{ github.sha }}
+      - run: npm ci

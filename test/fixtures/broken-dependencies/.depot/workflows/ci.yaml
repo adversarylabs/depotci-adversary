@@ -1,0 +1,21 @@
+name: Broken dependencies
+on: workflow_dispatch
+permissions:
+  contents: read
+jobs:
+  producer:
+    runs-on: depot-ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      image: ${{ steps.image.outputs.value }}
+    steps:
+      - id: image
+        run: echo "value=example" >> "$GITHUB_OUTPUT"
+  consumer:
+    runs-on: depot-ubuntu-latest
+    timeout-minutes: 10
+    needs: missing-job
+    env:
+      IMAGE: ${{ needs.producer.outputs.image }}
+    steps:
+      - run: echo "$IMAGE"

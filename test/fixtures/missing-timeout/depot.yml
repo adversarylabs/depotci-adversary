@@ -1,0 +1,15 @@
+name: Missing timeouts
+on: workflow_dispatch
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: depot-ubuntu-latest
+    steps:
+      - name: Build
+        run: make build
+  integration-test:
+    runs-on: depot-ubuntu-latest
+    steps:
+      - name: Integration tests
+        run: make integration-test

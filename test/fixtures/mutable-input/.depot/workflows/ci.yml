@@ -1,0 +1,11 @@
+name: Mutable tool
+on: workflow_dispatch
+permissions:
+  contents: read
+jobs:
+  tooling:
+    runs-on: depot-ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Install tool
+        run: curl -fsSL https://raw.githubusercontent.com/vendor/tool/main/install.sh | sh

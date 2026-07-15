@@ -1,0 +1,10 @@
+name: Uncached dependencies
+on: workflow_dispatch
+permissions:
+  contents: read
+jobs:
+  dependencies:
+    runs-on: depot-ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - run: npm ci

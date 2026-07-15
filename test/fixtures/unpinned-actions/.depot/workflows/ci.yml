@@ -1,0 +1,11 @@
+name: Mutable actions
+on: workflow_dispatch
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: depot-ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@main
+      - uses: ./local-action
