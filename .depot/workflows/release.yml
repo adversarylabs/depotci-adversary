@@ -126,7 +126,7 @@ jobs:
       - name: Publish adversary
         uses: adversarylabs/actions/publish@b3006fe48b87e55ba84556f5a0cf54147f0b9f92
         with:
-          cli-version: 2026.7.9-beta.1
+          cli-version: 2026.7.17-beta.2
           path: .
           token: ${{ secrets.ADVERSARY_SERVICE_ACCOUNT_TOKEN }}
           registry-namespace: adversarylabs
