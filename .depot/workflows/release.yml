@@ -124,7 +124,7 @@ jobs:
           trap - EXIT
 
       - name: Publish adversary
-        uses: adversarylabs/actions/publish@04c0915e5224786c1a9ba6064a1be70e7dbabb15
+        uses: adversarylabs/actions/publish@6238ff5df58eeae37cc53b4a7d7da2971953b7c0
         with:
           cli-version: 2026.7.17-beta.5
           path: .
