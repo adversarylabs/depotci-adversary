@@ -57,7 +57,7 @@ jobs:
 
       - name: Synchronize release metadata
         id: version
-        uses: adversarylabs/actions/version@893c9d126c937aac2c7bf3e78d4ed80527d1bc48
+        uses: adversarylabs/actions/version@0a1079b58cb4aa289df240a12a22afcc5b51ce01
         with:
           tag: ${{ github.ref_name }}
           path: .
