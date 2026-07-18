@@ -124,9 +124,11 @@ jobs:
           trap - EXIT
 
       - name: Publish adversary
-        uses: adversarylabs/actions/publish@b3006fe48b87e55ba84556f5a0cf54147f0b9f92
+        uses: adversarylabs/actions/publish@6238ff5df58eeae37cc53b4a7d7da2971953b7c0
         with:
           cli-version: 2026.7.17-beta.5
           path: .
           token: ${{ secrets.ADVERSARY_SERVICE_ACCOUNT_TOKEN }}
           registry-namespace: adversarylabs
+          repository-name: depotci-adversary
+          publish-latest: true
