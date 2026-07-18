@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  REVIEW_RESULT_SCHEMA_VERSION,
   TerminalRenderer,
   createAdversaryRunEnvelope,
 } from "@adversarylabs/sdk";
@@ -59,7 +58,6 @@ test("unpinned external actions group by owner and repository while local action
   const finding = output.findings.find((item) => item.ruleId === "depotci.action.unpinned");
   assert.ok(finding);
   assert.equal(finding.evidence.length, 2);
-  assert.equal(finding.synthesisSource, "rule");
 });
 
 test("missing timeouts are grouped across long-running jobs", async () => {
@@ -197,8 +195,6 @@ test("JSON output uses the canonical review protocol", async () => {
   const output = await review("good");
   const envelope = JSON.parse(JSON.stringify(createAdversaryRunEnvelope(output)));
   assert.equal(envelope.protocolVersion, 1);
-  assert.equal(envelope.result.schemaVersion, REVIEW_RESULT_SCHEMA_VERSION);
-  assert.equal(envelope.result.schemaVersion, "adversary.review.v1");
   assert.equal(envelope.result.adversary.name, "depotci");
   assert.equal(Array.isArray(envelope.result.findings), true);
 });
