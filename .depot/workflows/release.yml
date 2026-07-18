@@ -1,0 +1,131 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Test tagged source
+    runs-on: depot-ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+  publish:
+    name: Bump manifest and publish
+    needs: test
+    runs-on: depot-ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Set version from tag
+        id: version
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
+            echo "Release tag must be v followed by a semantic version; got ${GITHUB_REF_NAME}." >&2
+            exit 1
+          fi
+
+          VERSION="$version" node --input-type=module <<'EOF'
+          import { readFileSync, writeFileSync } from "node:fs";
+
+          const path = "adversary.yaml";
+          const source = readFileSync(path, "utf8");
+          const matches = source.match(/^version:\s*.*$/gm) ?? [];
+          if (matches.length !== 1) {
+            throw new Error(`Expected exactly one top-level version field in ${path}`);
+          }
+          const updated = source.replace(/^version:\s*.*$/m, `version: ${process.env.VERSION}`);
+          writeFileSync(path, updated);
+          EOF
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Commit version bump to main
+        env:
+          RELEASE_GITHUB_TOKEN: ${{ secrets.RELEASE_GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        shell: bash
+        run: |
+          git fetch --no-tags origin main
+          tag_sha="$(git rev-parse "${GITHUB_SHA}^{commit}")"
+          main_sha="$(git rev-parse origin/main)"
+          message="chore: bump adversary version to ${VERSION} [skip-ci]"
+
+          if [[ "$tag_sha" == "$main_sha" ]]; then
+            if git diff --quiet -- adversary.yaml; then
+              echo "adversary.yaml is already at ${VERSION}; no bump commit is needed."
+            else
+              git config user.name "adversarylabs-release"
+              git config user.email "adversarylabs-release@users.noreply.github.com"
+              git add adversary.yaml
+              git commit -m "$message"
+
+              auth_header="$(printf 'x-access-token:%s' "$RELEASE_GITHUB_TOKEN" | base64 | tr -d '\n')"
+              echo "::add-mask::$auth_header"
+              credential_key="http.https://github.com/.extraheader"
+              cleanup_credentials() {
+                git config --local --unset-all "$credential_key" || true
+              }
+              trap cleanup_credentials EXIT
+              git config --local "$credential_key" "AUTHORIZATION: basic $auth_header"
+              git push origin HEAD:main
+              cleanup_credentials
+              trap - EXIT
+            fi
+          else
+            if ! git merge-base --is-ancestor "$tag_sha" origin/main ||
+              ! git log --format=%s "${tag_sha}..origin/main" -- adversary.yaml | grep -Fqx "$message" ||
+              [[ "$(git show origin/main:adversary.yaml | sed -n 's/^version:[[:space:]]*//p')" != "$VERSION" ]]; then
+              echo "Release tag ${GITHUB_REF_NAME} no longer points at main and its version bump is not already present." >&2
+              exit 1
+            fi
+            echo "The ${VERSION} version bump is already on main; continuing this release rerun."
+          fi
+
+      - name: Publish adversary
+        uses: adversarylabs/actions/publish@b3006fe48b87e55ba84556f5a0cf54147f0b9f92
+        with:
+          cli-version: 2026.7.9-beta.1
+          path: .
+          token: ${{ secrets.ADVERSARY_SERVICE_ACCOUNT_TOKEN }}
+          registry-namespace: adversarylabs
