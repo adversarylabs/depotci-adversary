@@ -78,6 +78,18 @@ jobs:
           writeFileSync(path, updated);
           EOF
 
+          npm version "$version" \
+            --no-git-tag-version \
+            --allow-same-version \
+            --ignore-scripts
+
+          name="$(sed -n 's/^name:[[:space:]]*//p' adversary.yaml)"
+          if [[ ! "$name" =~ ^[a-z0-9]+([._-][a-z0-9]+)*$ ]]; then
+            echo "adversary.yaml must contain one lowercase OCI-compatible top-level name; got ${name:-<empty>}." >&2
+            exit 1
+          fi
+
+          echo "name=$name" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Commit version bump to main
@@ -99,21 +111,53 @@ jobs:
           tag_sha="$(git rev-parse "${GITHUB_SHA}^{commit}")"
           main_sha="$(git rev-parse origin/main)"
           message="chore: bump adversary version to ${VERSION} [skip-ci]"
+          version_files=(adversary.yaml package.json package-lock.json)
+
+          main_versions_match() {
+            metadata_dir="${RUNNER_TEMP:?RUNNER_TEMP is required}/release-main-metadata"
+            mkdir -p "$metadata_dir"
+            git show origin/main:adversary.yaml >"$metadata_dir/adversary.yaml"
+            git show origin/main:package.json >"$metadata_dir/package.json"
+            git show origin/main:package-lock.json >"$metadata_dir/package-lock.json"
+
+            METADATA_DIR="$metadata_dir" node --input-type=module <<'EOF'
+            import { readFileSync } from "node:fs";
+
+            const directory = process.env.METADATA_DIR;
+            const expected = process.env.VERSION;
+            const manifest = readFileSync(`${directory}/adversary.yaml`, "utf8");
+            const manifestVersions = manifest.match(/^version:\s*(.*)$/gm) ?? [];
+            const packageJSON = JSON.parse(readFileSync(`${directory}/package.json`, "utf8"));
+            const packageLock = JSON.parse(readFileSync(`${directory}/package-lock.json`, "utf8"));
+
+            const manifestVersion = manifestVersions.length === 1
+              ? manifestVersions[0].replace(/^version:\s*/, "")
+              : undefined;
+            if (
+              manifestVersion !== expected ||
+              packageJSON.version !== expected ||
+              packageLock.version !== expected ||
+              packageLock.packages?.[""]?.version !== expected
+            ) {
+              process.exit(1);
+            }
+          EOF
+          }
 
           if [[ "$tag_sha" == "$main_sha" ]]; then
-            if git diff --quiet -- adversary.yaml; then
-              echo "adversary.yaml is already at ${VERSION}; no bump commit is needed."
+            if git diff --quiet -- "${version_files[@]}"; then
+              echo "Release metadata is already at ${VERSION}; no bump commit is needed."
             else
               git config user.name "adversarylabs-release"
               git config user.email "adversarylabs-release@users.noreply.github.com"
-              git add adversary.yaml
+              git add "${version_files[@]}"
               git commit -m "$message"
               git push origin HEAD:main
             fi
           else
             if ! git merge-base --is-ancestor "$tag_sha" origin/main ||
-              ! git log --format=%s "${tag_sha}..origin/main" -- adversary.yaml | grep -Fqx "$message" ||
-              [[ "$(git show origin/main:adversary.yaml | sed -n 's/^version:[[:space:]]*//p')" != "$VERSION" ]]; then
+              ! git log --format=%s "${tag_sha}..origin/main" -- "${version_files[@]}" | grep -Fqx "$message" ||
+              ! main_versions_match; then
               echo "Release tag ${GITHUB_REF_NAME} no longer points at main and its version bump is not already present." >&2
               exit 1
             fi
@@ -130,5 +174,5 @@ jobs:
           path: .
           token: ${{ secrets.ADVERSARY_SERVICE_ACCOUNT_TOKEN }}
           registry-namespace: adversarylabs
-          repository-name: depotci-adversary
+          repository-name: ${{ steps.version.outputs.name }}
           publish-latest: true
