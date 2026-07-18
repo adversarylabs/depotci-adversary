@@ -35,8 +35,8 @@ jobs:
       - name: Run tests
         run: npm test
 
-  publish:
-    name: Bump manifest and publish
+  push:
+    name: Bump manifest and push
     needs: test
     runs-on: depot-ubuntu-latest
     timeout-minutes: 30
@@ -65,12 +65,12 @@ jobs:
           token: ${{ secrets.RELEASE_GITHUB_TOKEN }}
           sync-npm: auto
 
-      - name: Publish adversary
-        uses: adversarylabs/actions/publish@6238ff5df58eeae37cc53b4a7d7da2971953b7c0
+      - name: Push adversary
+        uses: adversarylabs/actions/push@db157870effc0c6c4f254b315514cb7d0fc74a2a
         with:
           cli-version: 2026.7.17-beta.5
           path: .
           token: ${{ secrets.ADVERSARY_SERVICE_ACCOUNT_TOKEN }}
           registry-namespace: adversarylabs
           repository-name: ${{ steps.version.outputs.name }}
-          publish-latest: true
+          push-latest: true
