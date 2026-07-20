@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import { realpath } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { Adversary } from "@adversarylabs/sdk";
 import { analyzeRepository } from "./analyze.js";
 import { inspectRepository } from "./context.js";
@@ -24,6 +26,9 @@ export function createApp(): Adversary {
   return app;
 }
 
-if (process.argv[1] !== undefined && import.meta.url === new URL(process.argv[1], "file:").href) {
+if (
+  process.argv[1] !== undefined &&
+  (await realpath(process.argv[1])) === (await realpath(fileURLToPath(import.meta.url)))
+) {
   await createApp().runFromEnvironment();
 }
