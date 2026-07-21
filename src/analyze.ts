@@ -4,10 +4,11 @@ import { type DepotWorkflow, type RepositoryContext, isRecord } from "./model.js
 import { analyzeActions } from "./rules/actions.js";
 import { analyzeCaching } from "./rules/cache.js";
 import { defaultSeverity, observationFor } from "./rules/definitions.js";
-import { hasCacheUse, isBuildAction, isLongRunningJob, secretNames } from "./rules/helpers.js";
+import { hasCacheUse, isBuildAction, isLongRunningJob, isReleaseJob, secretNames, stepText } from "./rules/helpers.js";
 import { analyzeJobs } from "./rules/jobs.js";
 import { analyzeSecurity } from "./rules/security.js";
 import { type Detection } from "./rules/types.js";
+import { materialAssessment, primaryOpportunities, reportPrimaryOpportunities } from "./synthesis.js";
 
 export function analyzeRepository(
   ctx: RuleContext,
@@ -64,6 +65,23 @@ function reportPositives(ctx: RuleContext, workflows: DepotWorkflow[], detection
       });
     }
 
+    const releaseValidation = workflow.jobs
+      .filter(isReleaseJob)
+      .flatMap((job) => job.steps
+        .filter((step) => isReleaseVersionValidation(stepText(step)))
+        .map((step) => ({ job: job.id, step })));
+    if (releaseValidation.length > 0) {
+      ctx.review.positive({
+        key: `depotci.release.version-validation:${workflow.path}`,
+        summary: `Validates the release version or tag before delivery in ${workflow.path}.`,
+        evidence: releaseValidation.slice(0, 5).map(({ job, step }) => ({
+          file: workflow.path,
+          line: step.location.line,
+          label: `${job}/${step.name}`,
+        })),
+      });
+    }
+
     if (workflow.events.has("pull_request") && isEffectiveCancellation(workflow.concurrency)) {
       ctx.review.positive({
         key: `depotci.concurrency.cancel:${workflow.path}`,
@@ -112,6 +130,7 @@ function reportReview(ctx: RuleContext, discovery: DiscoveryResult, detections: 
     return;
   }
 
+  reportPrimaryOpportunities(ctx, detections);
   const risk = highestRisk(detections);
   if (risk === "none") {
     ctx.review.assessment({
@@ -130,11 +149,17 @@ function reportReview(ctx: RuleContext, discovery: DiscoveryResult, detections: 
     return;
   }
 
+  const primary = primaryOpportunities(detections)[0];
   ctx.review.assessment({
     risk,
-    summary: "The workflow contains correctness, security, or release-control issues that should be addressed before relying on it for production publishing or deployment.",
+    summary: materialAssessment(detections),
   });
-  ctx.review.opinion({ ship: false, summary: "I would address the material workflow findings before production use." });
+  ctx.review.opinion({
+    ship: false,
+    summary: primary === undefined
+      ? "I would address the material workflow findings before production use."
+      : `I would ${trimTrailingPeriod(lowercaseFirst(primary))} before relying on these workflows for production delivery.`,
+  });
 }
 
 function highestRisk(detections: Detection[]): "none" | "low" | "medium" | "high" | "critical" {
@@ -159,4 +184,16 @@ function isExternalAction(value: string | undefined): value is string {
 
 function isEffectiveCancellation(value: unknown): boolean {
   return isRecord(value) && value["cancel-in-progress"] === true && value.group !== undefined;
+}
+
+function isReleaseVersionValidation(value: string): boolean {
+  return /\b(?:check|validate|verify)\b.*\b(?:release|tag|version)\b|\b(?:release|tag|version)\b.*\b(?:check|match|validate|verify)\b/i.test(value);
+}
+
+function lowercaseFirst(value: string): string {
+  return `${value.slice(0, 1).toLowerCase()}${value.slice(1)}`;
+}
+
+function trimTrailingPeriod(value: string): string {
+  return value.replace(/\.$/, "");
 }

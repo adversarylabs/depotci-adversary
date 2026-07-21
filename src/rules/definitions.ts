@@ -1,4 +1,4 @@
-import { Adversary, Confidence, Severity, type ObservationInit } from "@adversarylabs/sdk";
+import { Adversary, Confidence, Severity, type FindingSynthesis, type ObservationInit } from "@adversarylabs/sdk";
 import { type Detection, type RuleId } from "./types.js";
 
 interface RuleLanguage {
@@ -236,6 +236,9 @@ export function registerDepotRules(app: Adversary): void {
       defaultSeverity: rule.severity,
       defaultConfidence: rule.confidence,
       aggregate(observations) {
+        if (rule.id === "depotci.action.unpinned") {
+          return synthesizeUnpinnedActions(observations);
+        }
         const subjects = [...new Set(observations.map((observation) => observation.subject))].sort();
         return {
           title: observations.length === 1 ? rule.title.singular : rule.title.plural,
@@ -251,6 +254,80 @@ export function registerDepotRules(app: Adversary): void {
       },
     });
   }
+}
+
+function synthesizeUnpinnedActions(observations: ReadonlyArray<ObservationInit>): FindingSynthesis {
+  const data = observations.map(observationData);
+  const tier = stringField(data[0], "authorityTier") ?? "routine";
+  const releaseContext = data.some((item) => item.releaseContext === true);
+  const actionCounts = new Map<string, number>();
+  for (const observation of observations) {
+    actionCounts.set(observation.subject, (actionCounts.get(observation.subject) ?? 0) + 1);
+  }
+  const affected = [...actionCounts.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([action, count]) => `${action} (${count})`);
+  const reasons = [...new Set(data.flatMap((item) => stringArrayField(item, "authorityReasons")))].sort();
+
+  if (tier === "privileged-delivery" || tier === "privileged") {
+    const privilegedDelivery = tier === "privileged-delivery" && releaseContext;
+    return {
+      title: privilegedDelivery
+        ? "Release workflows execute mutable actions with production authority"
+        : "Mutable actions execute with elevated workflow authority",
+      category: "supply-chain",
+      summary: `Mutable third-party actions execute in ${observations.length} privileged workflow location${observations.length === 1 ? "" : "s"}.\n\nAffected:\n${affected.map((item) => `- ${item}`).join("\n")}`,
+      whyItMatters: `A mutable reference can replace the code executed inside an authoritative job without a repository change. ${reasons.join(" ")}`.trim(),
+      impact: "Compromise of one referenced tag or branch could modify releases, repository contents, deployment state, or published artifacts using the job's existing authority.",
+      recommendation: privilegedDelivery
+        ? "Pin the release-critical actions to full commit SHAs first, then keep those pins current with an automated dependency update workflow."
+        : "Pin actions that execute with elevated permissions or credentials to full commit SHAs, then keep those pins current with reviewed automation.",
+      remediation: { complexity: "small" },
+      tags: privilegedDelivery
+        ? ["actions", "release", "supply-chain", "runtime"]
+        : ["actions", "permissions", "supply-chain", "runtime"],
+    };
+  }
+
+  if (tier === "delivery") {
+    return {
+      title: "Release and publishing actions use mutable references",
+      category: "supply-chain",
+      summary: `Delivery-related actions use mutable tags or branches in ${observations.length} workflow location${observations.length === 1 ? "" : "s"}.\n\nAffected:\n${affected.map((item) => `- ${item}`).join("\n")}`,
+      whyItMatters: "Release and publishing paths should remain reproducible even when the referenced action publishes a new tag revision.",
+      impact: "A future delivery run can execute different third-party code without a corresponding workflow review.",
+      recommendation: "Pin delivery-related actions to full commit SHAs and update those pins through reviewed automation.",
+      remediation: { complexity: "small" },
+      tags: ["actions", "release", "supply-chain"],
+    };
+  }
+
+  return {
+    title: "Repository-wide GitHub Action pinning policy",
+    category: "supply-chain",
+    summary: `Routine CI actions use mutable tags or branches in ${observations.length} workflow location${observations.length === 1 ? "" : "s"}.\n\nAffected:\n${affected.map((item) => `- ${item}`).join("\n")}`,
+    whyItMatters: "A consistent pinning policy makes routine CI reproducible and avoids reviewing the same remediation action by action.",
+    impact: "Test and setup jobs can change behavior without a repository change, but they do not have the release authority identified in higher-priority findings.",
+    recommendation: "Establish a repository-wide policy that pins external actions to full commit SHAs and updates them through reviewed automation.",
+    remediation: { complexity: "small" },
+    tags: ["actions", "supply-chain"],
+  };
+}
+
+function observationData(observation: ObservationInit): Record<string, unknown> {
+  return typeof observation.evidence === "object" && observation.evidence !== null && !Array.isArray(observation.evidence)
+    ? observation.evidence
+    : {};
+}
+
+function stringField(value: Record<string, unknown> | undefined, field: string): string | undefined {
+  const item = value?.[field];
+  return typeof item === "string" ? item : undefined;
+}
+
+function stringArrayField(value: Record<string, unknown>, field: string): string[] {
+  const item = value[field];
+  return Array.isArray(item) ? item.filter((entry): entry is string => typeof entry === "string") : [];
 }
 
 function highestConfidence(

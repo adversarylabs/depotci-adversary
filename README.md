@@ -4,6 +4,8 @@ Reviews Depot CI workflows for security, correctness, reliability, caching, and 
 
 The `0.1.0` review is intentionally focused. It recognizes the GitHub-compatible job and step structure used by Depot workflows, reasons about Depot runners and remote builds, and reports a small set of evidence-backed findings rather than linting YAML style.
 
+Review synthesis groups related observations by remediation, prioritizes release and publishing paths with elevated permissions or credentials, and presents the highest-value opportunities before the detailed evidence.
+
 ## Supported workflow locations
 
 The adversary discovers workflow candidates in:
@@ -73,6 +75,7 @@ adversary run adversarylabs/depotci --repo .
 - `src/model.ts` defines the normalized workflow model.
 - `src/context.ts` loads only the related repository inputs needed by rules.
 - `src/analyze.ts` emits observations, positive signals, and the review-level assessment.
+- `src/synthesis.ts` prioritizes remediation groups and produces the overall engineering assessment.
 - `src/rules/` contains rule definitions and focused analyzers.
 - `test/fixtures/good/` is a clean Depot workflow example.
 - `test/fixtures/unsafe-pull-request/`, `ineffective-cache/`, and the other fixture directories demonstrate individual problematic patterns.

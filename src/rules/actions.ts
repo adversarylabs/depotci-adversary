@@ -1,10 +1,20 @@
 import { Severity } from "@adversarylabs/sdk";
-import { type DepotWorkflow } from "../model.js";
-import { isReleaseJob, stepText } from "./helpers.js";
+import { type DepotWorkflow, type WorkflowJob, type WorkflowStep } from "../model.js";
+import { isReleaseJob, permissionWrites, secretNames, stepText } from "./helpers.js";
 import { type Detection } from "./types.js";
 
 const FULL_COMMIT_SHA = /^[0-9a-f]{40}$/i;
-const SENSITIVE_ACTION = /\b(?:auth|attest|build-push|credential|deploy|login|publish|release|setup-action|sign|upload)\b/i;
+const DELIVERY_ACTION = /\b(?:auth|attest|build-push|credential|deploy|login|publish|release|sign)\b/i;
+
+type AuthorityTier = "privileged-delivery" | "privileged" | "delivery" | "routine";
+
+interface ActionAuthority {
+  tier: AuthorityTier;
+  releaseContext: boolean;
+  writePermissions: string[];
+  secretNames: string[];
+  reasons: string[];
+}
 
 export function analyzeActions(workflow: DepotWorkflow): Detection[] {
   const detections: Detection[] = [];
@@ -13,7 +23,16 @@ export function analyzeActions(workflow: DepotWorkflow): Detection[] {
     if (job.uses !== undefined) {
       const parsed = parseExternalReference(job.uses);
       if (parsed !== undefined && !FULL_COMMIT_SHA.test(parsed.ref)) {
-        detections.push(unpinnedDetection(workflow, job.id, job.location.line, job.location.snippet, parsed.ownerRepository, parsed.ref, isReleaseJob(job)));
+        detections.push(unpinnedDetection(
+          workflow,
+          job,
+          undefined,
+          job.id,
+          job.location.line,
+          job.location.snippet,
+          parsed.ownerRepository,
+          parsed.ref,
+        ));
       }
     }
 
@@ -21,8 +40,16 @@ export function analyzeActions(workflow: DepotWorkflow): Detection[] {
       if (step.uses !== undefined) {
         const parsed = parseExternalReference(step.uses);
         if (parsed !== undefined && !FULL_COMMIT_SHA.test(parsed.ref)) {
-          const sensitive = isReleaseJob(job) || SENSITIVE_ACTION.test(parsed.ownerRepository) || SENSITIVE_ACTION.test(stepText(step));
-          detections.push(unpinnedDetection(workflow, `${job.id}/${step.name}`, step.location.line, step.location.snippet, parsed.ownerRepository, parsed.ref, sensitive));
+          detections.push(unpinnedDetection(
+            workflow,
+            job,
+            step,
+            `${job.id}/${step.name}`,
+            step.location.line,
+            step.location.snippet,
+            parsed.ownerRepository,
+            parsed.ref,
+          ));
         }
       }
 
@@ -52,30 +79,72 @@ function parseExternalReference(uses: string): { ownerRepository: string; ref: s
 
 function unpinnedDetection(
   workflow: DepotWorkflow,
+  job: WorkflowJob,
+  step: WorkflowStep | undefined,
   subject: string,
   line: number,
   snippet: string,
   ownerRepository: string,
   ref: string,
-  sensitive: boolean,
 ): Detection {
+  const authority = actionAuthority(workflow, job, step, ownerRepository);
   return {
     ruleId: "depotci.action.unpinned",
     subject: ownerRepository,
-    groupKey: `depotci.action.unpinned:${ownerRepository}`,
-    severity: sensitive ? Severity.Medium : Severity.Low,
+    groupKey: `depotci.action.unpinned:${authority.tier}`,
+    severity: authority.tier === "privileged-delivery" || authority.tier === "privileged"
+      ? Severity.High
+      : authority.tier === "delivery"
+        ? Severity.Medium
+        : Severity.Low,
     file: workflow.path,
     line,
     snippet,
     label: `${subject} uses ${ownerRepository}@${ref}`,
     data: {
       workflow: workflow.name,
+      job: job.id,
+      step: step?.name,
       action: ownerRepository,
       reference: ref,
       referenceType: classifyReference(ref),
-      sensitivePath: sensitive,
+      authorityTier: authority.tier,
+      releaseContext: authority.releaseContext,
+      writePermissions: authority.writePermissions,
+      secretNames: authority.secretNames,
+      authorityReasons: authority.reasons,
     },
   };
+}
+
+function actionAuthority(
+  workflow: DepotWorkflow,
+  job: WorkflowJob,
+  step: WorkflowStep | undefined,
+  ownerRepository: string,
+): ActionAuthority {
+  const writePermissions = permissionWrites(job.permissions ?? workflow.permissions);
+  const credentials = secretNames({
+    workflow: workflow.env,
+    job: job.env,
+    action: step?.raw ?? job.raw,
+  });
+  const releaseContext = DELIVERY_ACTION.test(`${workflow.name} ${workflow.path}`) || isReleaseJob(job) || DELIVERY_ACTION.test(ownerRepository) || (step !== undefined && DELIVERY_ACTION.test(stepText(step)));
+  const reasons = [
+    ...(writePermissions.length > 0
+      ? [`This action executes with repository write permissions (${writePermissions.join(", ")}).`]
+      : []),
+    ...(credentials.length > 0
+      ? [`This action receives publishing or deployment credentials (${credentials.join(", ")}).`]
+      : []),
+    ...(releaseContext ? ["This action runs in a release, publishing, signing, or deployment path."] : []),
+  ];
+  const tier: AuthorityTier = writePermissions.length > 0 || credentials.length > 0
+    ? (releaseContext ? "privileged-delivery" : "privileged")
+    : releaseContext
+      ? "delivery"
+      : "routine";
+  return { tier, releaseContext, writePermissions, secretNames: credentials, reasons };
 }
 
 function classifyReference(ref: string): "latest" | "version-tag" | "branch-or-tag" {
@@ -99,14 +168,15 @@ function mutableRunInputs(
   if (run === undefined) {
     return [];
   }
+  const executed = executableShellLines(run);
   const reasons: string[] = [];
-  if (/(?:curl|wget)[^\n]*(?:raw\.githubusercontent\.com|github\.com\/[^\s]+\/raw\/)(?:[^\s]+\/)?(?:main|master|HEAD)\b/i.test(run)) {
+  if (executed.some((line) => isExecutedCommand(line, "(?:curl|wget)") && /(?:raw\.githubusercontent\.com|github\.com\/[^\s]+\/raw\/)(?:[^\s]+\/)?(?:main|master|HEAD)\b/i.test(line))) {
     reasons.push("script is downloaded from a mutable branch");
   }
-  if (/(?:curl|wget)[^\n]*\|\s*(?:sudo\s+)?(?:ba)?sh\b/i.test(run)) {
+  if (executed.some((line) => isExecutedCommand(line, "(?:curl|wget)") && /\|\s*(?:sudo\s+)?(?:ba)?sh\b/i.test(line))) {
     reasons.push("downloaded content is executed directly without an integrity check");
   }
-  if (/\bdocker\s+(?:pull|run)\s+[^\s]+:latest\b/i.test(run)) {
+  if (executed.some((line) => isExecutedCommand(line, "docker") && /\bdocker\s+(?:pull|run)\s+[^\s]+:latest\b/i.test(line))) {
     reasons.push("container image uses the mutable latest tag");
   }
   if (reasons.length === 0) {
@@ -122,4 +192,32 @@ function mutableRunInputs(
     label: `${job}/${step} uses a mutable external build input`,
     data: { workflow: workflow.name, job, step, reasons },
   }];
+}
+
+function executableShellLines(run: string): string[] {
+  const lines = run.split(/\r?\n/);
+  const executable: string[] = [];
+  let heredocTerminator: string | undefined;
+
+  for (const line of lines) {
+    if (heredocTerminator !== undefined) {
+      if (line.trim().replace(/^\t+/, "") === heredocTerminator) {
+        heredocTerminator = undefined;
+      }
+      continue;
+    }
+
+    const trimmed = line.trim();
+    if (trimmed.length === 0 || trimmed.startsWith("#")) {
+      continue;
+    }
+    executable.push(trimmed);
+    const heredoc = trimmed.match(/<<-?\s*['\"]?([A-Za-z_][A-Za-z0-9_]*)['\"]?/);
+    heredocTerminator = heredoc?.[1];
+  }
+  return executable;
+}
+
+function isExecutedCommand(line: string, command: string): boolean {
+  return new RegExp(`(?:^|&&\\s*|\\|\\|\\s*|[;|]\\s*|\\$\\(\\s*|\\b(?:then|do)\\s+)(?:sudo\\s+)?${command}\\b`, "i").test(line);
 }
