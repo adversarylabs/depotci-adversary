@@ -8,4 +8,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Install tool
-        run: curl -fsSL https://raw.githubusercontent.com/vendor/tool/main/install.sh | sh
+        run: |
+          curl -fsSL \
+            https://raw.githubusercontent.com/vendor/tool/main/install.sh \
+            | sh

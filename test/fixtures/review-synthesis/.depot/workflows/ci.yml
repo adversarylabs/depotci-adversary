@@ -1,0 +1,32 @@
+name: Pull request validation
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: depot-ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+      - name: Test
+        run: npm test
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: reports
+      - name: Prepare installation guidance
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          body=$(cat <<'GUIDANCE'
+          To install the preview manually:
+          curl https://raw.githubusercontent.com/example/tool/main/install.sh | sh
+          GUIDANCE
+          )
+          gh pr comment --body "$body"

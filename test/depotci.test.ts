@@ -48,7 +48,7 @@ test("strict YAML failures include a useful file and line", async () => {
   }
 });
 
-test("unpinned external actions group by owner and repository while local actions are ignored", async () => {
+test("routine unpinned action occurrences share one remediation group while local actions are ignored", async () => {
   const output = await review("unpinned-actions", { raw: true });
   const observations = output.rawObservations?.filter((item) => item.ruleId === "depotci.action.unpinned") ?? [];
   assert.equal(observations.length, 2);
@@ -58,6 +58,61 @@ test("unpinned external actions group by owner and repository while local action
   const finding = output.findings.find((item) => item.ruleId === "depotci.action.unpinned");
   assert.ok(finding);
   assert.equal(finding.evidence.length, 2);
+});
+
+test("action findings group by remediation and prioritize production authority", async () => {
+  const output = await review("review-synthesis", { raw: true });
+  const findings = output.findings.filter((item) => item.ruleId === "depotci.action.unpinned");
+  assert.equal(findings.length, 2);
+
+  const privileged = findings.find((item) => item.groupKey === "depotci.action.unpinned:privileged-delivery");
+  assert.ok(privileged);
+  assert.equal(privileged.title, "Release workflows execute mutable actions with production authority");
+  assert.equal(privileged.severity, "high");
+  assert.deepEqual(
+    privileged.evidence.map((item) => item.data?.action).sort(),
+    ["actions/checkout", "elasticclaw/actions", "softprops/action-gh-release"],
+  );
+  assert.match(privileged.summary, /actions\/checkout \(1\).*elasticclaw\/actions \(1\).*softprops\/action-gh-release \(1\)/s);
+  assert.match(privileged.whyItMatters ?? "", /repository write permissions.*publishing or deployment credentials/s);
+
+  const policy = findings.find((item) => item.groupKey === "depotci.action.unpinned:routine");
+  assert.ok(policy);
+  assert.equal(policy.title, "Repository-wide GitHub Action pinning policy");
+  assert.equal(policy.severity, "low");
+  assert.deepEqual(
+    policy.evidence.map((item) => item.data?.action).sort(),
+    ["actions/checkout", "actions/setup-node", "actions/upload-artifact"],
+  );
+  assert.equal(new Set(findings.map((item) => item.recommendation)).size, 2);
+});
+
+test("primary opportunities and assessment explain what to fix first", async () => {
+  const output = await review("review-synthesis");
+  const repeated = await review("review-synthesis");
+  const priorities = output.observations.find((item) => item.key === "depotci.primary-opportunities");
+  assert.ok(priorities);
+  assert.match(priorities.summary, /^Primary opportunities\n1\. Pin release-critical GitHub Actions by full commit SHA\./);
+  assert.match(priorities.summary, /Establish a repository-wide GitHub Action pinning policy/);
+  assert.match(priorities.summary, /Add explicit timeout-minutes to long-running jobs/);
+
+  assert.equal(output.assessment?.risk, "high");
+  assert.match(output.assessment?.summary ?? "", /release and publishing paths rely on mutable third-party actions/);
+  assert.match(output.assessment?.summary ?? "", /repository write permissions \(contents\)/);
+  assert.match(output.assessment?.summary ?? "", /ELASTICCLAW_TOKEN/);
+  assert.equal(output.findings[0]?.groupKey, "depotci.action.unpinned:privileged-delivery");
+  assert.match(output.opinion?.summary ?? "", /pin release-critical GitHub Actions.*before relying/);
+  assert.deepEqual(repeated, output);
+});
+
+test("release validation and explicit expensive-job timeouts are factual positive signals", async () => {
+  const output = await review("review-synthesis");
+  assert.deepEqual(output.positives.map((positive) => positive.key), [
+    "depotci.jobs.timeouts:.depot/workflows/release.yml",
+    "depotci.release.version-validation:.depot/workflows/release.yml",
+  ]);
+  const validation = output.positives.find((positive) => positive.key === "depotci.release.version-validation:.depot/workflows/release.yml");
+  assert.deepEqual(validation?.evidence?.map((item) => item.label), ["publish/Check version matches tag"]);
 });
 
 test("missing timeouts are grouped across long-running jobs", async () => {
@@ -157,6 +212,11 @@ test("mutable remote scripts are identified separately from action pinning", asy
   assert.equal(output.findings.some((item) => item.ruleId === "depotci.action.unpinned"), false);
 });
 
+test("remote commands shown in generated guidance are not treated as executed downloads", async () => {
+  const output = await review("review-synthesis");
+  assert.equal(output.findings.some((item) => item.ruleId === "depotci.build.mutable-input"), false);
+});
+
 test("clean workflows produce concise positives and no material findings", async () => {
   const output = await review("good", { raw: true });
   assert.equal(output.adversary.name, "depotci");
@@ -187,7 +247,7 @@ test("terminal output excludes raw observation metadata", async () => {
   const rendered: string[] = [];
   new TerminalRenderer((text) => rendered.push(text)).render(output);
   const terminal = rendered.join("");
-  assert.match(terminal, /External actions use mutable references/);
+  assert.match(terminal, /Repository-wide GitHub Action pinning policy/);
   assert.doesNotMatch(terminal, /referenceType|sensitivePath|rawObservations|groupKey/);
 });
 
