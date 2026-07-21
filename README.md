@@ -78,3 +78,7 @@ adversary run adversarylabs/depotci --repo .
 - `test/fixtures/unsafe-pull-request/`, `ineffective-cache/`, and the other fixture directories demonstrate individual problematic patterns.
 
 The adversary never modifies the reviewed repository and does not require network access.
+
+## Automatic detection
+
+`adversary auto` selects the depotci adversary when changes include `.depot/workflows/**` or `.depot/**/*.yml`, plus the other domain-specific patterns declared in `adversary.yaml`. Unrelated changes do not select it.
