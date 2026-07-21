@@ -111,6 +111,8 @@ test("release validation and explicit expensive-job timeouts are factual positiv
     "depotci.jobs.timeouts:.depot/workflows/release.yml",
     "depotci.release.version-validation:.depot/workflows/release.yml",
   ]);
+  const validation = output.positives.find((positive) => positive.key === "depotci.release.version-validation:.depot/workflows/release.yml");
+  assert.deepEqual(validation?.evidence?.map((item) => item.label), ["publish/Check version matches tag"]);
 });
 
 test("missing timeouts are grouped across long-running jobs", async () => {

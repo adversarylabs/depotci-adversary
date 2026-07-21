@@ -24,6 +24,8 @@ jobs:
     steps:
       - name: Check version matches tag
         run: ./scripts/check-version "${{ github.ref_name }}"
+      - name: Check Node.js version
+        run: node --version
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:

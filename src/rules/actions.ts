@@ -196,7 +196,7 @@ function mutableRunInputs(
 
 function executableShellLines(run: string): string[] {
   const lines = run.split(/\r?\n/);
-  const executable: string[] = [];
+  const physicalLines: string[] = [];
   let heredocTerminator: string | undefined;
 
   for (const line of lines) {
@@ -211,11 +211,39 @@ function executableShellLines(run: string): string[] {
     if (trimmed.length === 0 || trimmed.startsWith("#")) {
       continue;
     }
-    executable.push(trimmed);
+    physicalLines.push(trimmed);
     const heredoc = trimmed.match(/<<-?\s*['\"]?([A-Za-z_][A-Za-z0-9_]*)['\"]?/);
     heredocTerminator = heredoc?.[1];
   }
-  return executable;
+  return joinShellContinuations(physicalLines);
+}
+
+function joinShellContinuations(lines: string[]): string[] {
+  const logicalLines: string[] = [];
+  let pending = "";
+  for (const line of lines) {
+    const { continued, fragment } = shellContinuation(line);
+    pending = pending.length === 0 ? fragment : `${pending} ${fragment.trimStart()}`;
+    if (!continued) {
+      logicalLines.push(pending);
+      pending = "";
+    }
+  }
+  if (pending.length > 0) {
+    logicalLines.push(pending);
+  }
+  return logicalLines;
+}
+
+function shellContinuation(line: string): { continued: boolean; fragment: string } {
+  const trailing = line.match(/(\\+)\s*$/);
+  if (trailing === null || trailing[1].length % 2 === 0 || trailing.index === undefined) {
+    return { continued: false, fragment: line };
+  }
+  return {
+    continued: true,
+    fragment: `${line.slice(0, trailing.index)}${trailing[1].slice(0, -1)}`.trimEnd(),
+  };
 }
 
 function isExecutedCommand(line: string, command: string): boolean {

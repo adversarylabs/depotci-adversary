@@ -1,6 +1,6 @@
 import { Severity, type RuleContext } from "@adversarylabs/sdk";
 import { type DiscoveryResult } from "./discover.js";
-import { type DepotWorkflow, type RepositoryContext, isRecord } from "./model.js";
+import { type DepotWorkflow, type RepositoryContext, type WorkflowStep, isRecord } from "./model.js";
 import { analyzeActions } from "./rules/actions.js";
 import { analyzeCaching } from "./rules/cache.js";
 import { defaultSeverity, observationFor } from "./rules/definitions.js";
@@ -68,7 +68,7 @@ function reportPositives(ctx: RuleContext, workflows: DepotWorkflow[], detection
     const releaseValidation = workflow.jobs
       .filter(isReleaseJob)
       .flatMap((job) => job.steps
-        .filter((step) => isReleaseVersionValidation(stepText(step)))
+        .filter(isReleaseVersionValidation)
         .map((step) => ({ job: job.id, step })));
     if (releaseValidation.length > 0) {
       ctx.review.positive({
@@ -186,8 +186,12 @@ function isEffectiveCancellation(value: unknown): boolean {
   return isRecord(value) && value["cancel-in-progress"] === true && value.group !== undefined;
 }
 
-function isReleaseVersionValidation(value: string): boolean {
-  return /\b(?:check|validate|verify)\b.*\b(?:release|tag|version)\b|\b(?:release|tag|version)\b.*\b(?:check|match|validate|verify)\b/i.test(value);
+function isReleaseVersionValidation(step: WorkflowStep): boolean {
+  const value = stepText(step);
+  const hasReleaseTarget = /\b(?:release|tag)\b|github\.ref(?:_name)?\b|GITHUB_REF(?:_NAME)?\b|refs\/tags\//i.test(value);
+  const hasVersionSource = /\bversion\b|package\.json|Cargo\.toml|pyproject\.toml|pom\.xml/i.test(value);
+  const hasComparison = /\b(?:compare|equal|match|validate|verify)(?:s|ed|ing)?\b|check-version|(?:==|!=|=~)|\btest\b|\[\[?/i.test(value);
+  return hasReleaseTarget && hasVersionSource && hasComparison;
 }
 
 function lowercaseFirst(value: string): string {
