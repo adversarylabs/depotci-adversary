@@ -13,6 +13,17 @@ triggers:
     - "depot-*.yml"
     - "depot-*.yaml"
 
+detection:
+  files:
+    - ".depot/workflows/**"
+    - ".depot/**/*.yml"
+    - ".depot/**/*.yaml"
+    - "depot.json"
+    - "depot.yml"
+    - "depot.yaml"
+    - "depot-*.yml"
+    - "depot-*.yaml"
+
 runtime:
   name: node
   version: "22"
