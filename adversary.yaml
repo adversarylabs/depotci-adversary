@@ -1,4 +1,4 @@
-name: depotci
+name: ci/depot
 version: 0.0.11
 description: Reviews Depot CI workflows for security, correctness, reliability, caching, and performance concerns.
 
