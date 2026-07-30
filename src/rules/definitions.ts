@@ -224,6 +224,61 @@ const RULES: RuleLanguage[] = [
     complexity: "small",
     tags: ["supply-chain", "reproducibility"],
   },
+  {
+    id: "depotci.script-injection",
+    category: "security",
+    severity: Severity.Critical,
+    confidence: Confidence.High,
+    title: {
+      singular: "Untrusted event field is expanded inside a shell step",
+      plural: "Untrusted event fields are expanded inside shell steps",
+    },
+    summary: (count) =>
+      `${count} workflow step${count === 1 ? "" : "s"} interpolate untrusted github.event fields into run: shell.`,
+    whyItMatters:
+      "Issue titles, comment bodies, and similar fields can contain shell metacharacters that break out of unquoted expansions.",
+    impact: "Attackers can inject commands into privileged CI and steal secrets or modify artifacts.",
+    recommendation:
+      "Pass untrusted values through env: and quote them in shell, or avoid shell interpolation entirely.",
+    complexity: "small",
+    tags: ["security", "script-injection"],
+  },
+  {
+    id: "depotci.runs-on.self-hosted",
+    category: "security",
+    severity: Severity.Critical,
+    confidence: Confidence.High,
+    title: {
+      singular: "Self-hosted runner executes untrusted pull request work",
+      plural: "Self-hosted runners execute untrusted pull request work",
+    },
+    summary: (count) =>
+      `${count} job${count === 1 ? "" : "s"} run on self-hosted runners for pull_request workflows.`,
+    whyItMatters:
+      "Public PR code on persistent self-hosted runners exposes the host and any credentials available to that machine.",
+    impact: "Attackers can persist on the runner, steal secrets, or pivot into the network.",
+    recommendation:
+      "Use GitHub-hosted or ephemeral runners for untrusted PR code; keep secrets off long-lived self-hosted fleets.",
+    complexity: "small",
+    tags: ["security", "self-hosted"],
+  },
+  {
+    id: "depotci.secret.scope-broad",
+    category: "security",
+    severity: Severity.High,
+    confidence: Confidence.High,
+    title: {
+      singular: "Job-level secrets are exposed to multiple steps",
+      plural: "Job-level secrets are exposed to multiple steps",
+    },
+    summary: (count) =>
+      `${count} job${count === 1 ? "" : "s"} inject secrets at job scope across more than one step.`,
+    whyItMatters: "Broad secret scope amplifies any compromised or injected step.",
+    impact: "A single unsafe step can read secrets intended for a different step.",
+    recommendation: "Scope secrets to the individual steps that need them.",
+    complexity: "small",
+    tags: ["security", "secrets"],
+  },
 ];
 
 const RULE_MAP = new Map(RULES.map((rule) => [rule.id, rule]));

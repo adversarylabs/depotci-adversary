@@ -29,4 +29,7 @@ export type RuleId =
   | "depotci.release.missing-gate"
   | "depotci.workflow.redundant-work"
   | "depotci.workflow.concurrency"
-  | "depotci.build.mutable-input";
+  | "depotci.build.mutable-input"
+  | "depotci.script-injection"
+  | "depotci.runs-on.self-hosted"
+  | "depotci.secret.scope-broad";
