@@ -30,7 +30,7 @@ export function analyzeRepository(
     detections.push(...analyzeActions(workflow));
     detections.push(...analyzeJobs(workflow));
     detections.push(...analyzeCaching(workflow, repository));
-    detections.push(...analyzeSecurity(workflow));
+    detections.push(...analyzeSecurity(workflow, ctx.repoPath));
   }
 
   detections.sort(compareDetections);

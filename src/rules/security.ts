@@ -1,4 +1,7 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { Confidence, Severity } from "@adversarylabs/sdk";
+import { detectCiSecurityIssues, DEPOT_RULE_IDS } from "../ci-security-core.js";
 import { type DepotWorkflow, type WorkflowJob, type WorkflowStep, expressionText } from "../model.js";
 import {
   conditionAllowsPullRequest,
@@ -10,14 +13,53 @@ import {
   permissionWrites,
   secretNames,
 } from "./helpers.js";
-import { type Detection } from "./types.js";
+import { type Detection, type RuleId } from "./types.js";
 
-export function analyzeSecurity(workflow: DepotWorkflow): Detection[] {
+export function analyzeSecurity(workflow: DepotWorkflow, repoPath = ""): Detection[] {
   return [
     ...secretScope(workflow),
     ...untrustedPullRequestExecution(workflow),
     ...broadPermissions(workflow),
+    ...sharedCoreDetections(workflow, repoPath),
   ];
+}
+
+/** Shared GHA/Depot core for script-injection, self-hosted PR, and related P0s. */
+function sharedCoreDetections(workflow: DepotWorkflow, repoPath: string): Detection[] {
+  let source = "";
+  try {
+    const absolute = repoPath ? join(repoPath, workflow.path) : workflow.path;
+    source = readFileSync(absolute, "utf8");
+  } catch {
+    return [];
+  }
+  const hits = detectCiSecurityIssues(workflow.path, source);
+  const out: Detection[] = [];
+  for (const hit of hits) {
+    const mapped = DEPOT_RULE_IDS[hit.key];
+    if (!mapped) continue;
+    // Prefer structured analyzers for these when they already fired / cover better.
+    if (
+      mapped === "depotci.action.unpinned" ||
+      mapped === "depotci.permissions.broad" ||
+      mapped === "depotci.pull-request.untrusted-code" ||
+      mapped === "depotci.secret.scope-broad"
+    ) {
+      continue;
+    }
+    const ruleId = mapped as RuleId;
+    out.push({
+      ruleId,
+      subject: workflow.path,
+      groupKey: `${ruleId}:${workflow.path}:${hit.line}`,
+      file: hit.file,
+      line: hit.line,
+      snippet: hit.snippet,
+      label: hit.label,
+      data: { ...hit.data, workflow: workflow.name, sharedCore: true },
+    });
+  }
+  return out;
 }
 
 function secretScope(workflow: DepotWorkflow): Detection[] {
