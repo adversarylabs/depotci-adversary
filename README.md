@@ -85,3 +85,7 @@ The adversary never modifies the reviewed repository and does not require networ
 ## Automatic detection
 
 `adversary auto` selects the depotci adversary when changes include `.depot/workflows/**` or `.depot/**/*.yml`, plus the other domain-specific patterns declared in `adversary.yaml`. Unrelated changes do not select it.
+
+## Issue catalog
+
+What this adversary targets (P0 / P1 / LLM-only priorities, detection notes, and public pattern references) is documented in [docs/issue-catalog.md](docs/issue-catalog.md).
