@@ -11,7 +11,7 @@ import { registerDepotRules } from "./rules/definitions.js";
 export function createApp(): Adversary {
   const app = new Adversary({
     name: "depotci",
-    version: "0.1.0",
+    version: "0.0.16",
     review: { maximumFindings: 8 },
   });
   registerDepotRules(app);

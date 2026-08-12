@@ -1,5 +1,5 @@
 name: ci/depot
-version: 0.0.15
+version: 0.0.16
 description: Reviews Depot CI workflows for security, correctness, reliability, caching, and performance concerns.
 
 triggers:
