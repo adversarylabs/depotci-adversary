@@ -220,7 +220,7 @@ test("remote commands shown in generated guidance are not treated as executed do
 test("clean workflows produce concise positives and no material findings", async () => {
   const output = await review("good", { raw: true });
   assert.equal(output.adversary.name, "depotci");
-  assert.equal(output.adversary.version, "0.1.0");
+  assert.match(output.adversary.version, /^\d+\.\d+\.\d+$/);
   assert.equal(output.target.filesScanned, 2);
   assert.deepEqual(output.findings, []);
   assert.deepEqual(output.rawObservations, []);
