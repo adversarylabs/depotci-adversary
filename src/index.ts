@@ -20,7 +20,7 @@ export function createApp(): Adversary {
     const discovery = await discoverDepotWorkflows(ctx.repoPath);
     const repository = await inspectRepository(ctx.repoPath, discovery.repositoryFiles);
     ctx.summary.files_scanned = discovery.candidates.length;
-    analyzeRepository(ctx, discovery, repository);
+    await analyzeRepository(ctx, discovery, repository);
   });
 
   return app;

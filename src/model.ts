@@ -17,6 +17,7 @@ export interface WorkflowStep {
   with: StringMap;
   raw: StringMap;
   location: SourceLocation;
+  fieldLocations: Partial<Record<"uses", SourceLocation>>;
 }
 
 export interface WorkflowJob {
@@ -33,6 +34,7 @@ export interface WorkflowJob {
   uses?: string;
   raw: StringMap;
   location: SourceLocation;
+  fieldLocations: Partial<Record<"uses", SourceLocation>>;
 }
 
 export interface DepotWorkflow {

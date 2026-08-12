@@ -142,6 +142,7 @@ function parseJob(path: string, source: string, id: string, node: YAMLMap<unknow
         with: toRecord(stepRaw.with),
         raw: stepRaw,
         location: locationFor(item, source, lineCounter),
+        fieldLocations: locationsForFields(item, ["uses"], source, lineCounter),
       });
     }
   }
@@ -170,6 +171,7 @@ function parseJob(path: string, source: string, id: string, node: YAMLMap<unknow
       uses: stringValue(raw.uses),
       raw,
       location: locationFor(node, source, lineCounter),
+      fieldLocations: locationsForFields(node, ["uses"], source, lineCounter),
     },
   };
 }
@@ -211,6 +213,18 @@ function scalarString(node: unknown): string | undefined {
 function locationFor(node: unknown, source: string, lineCounter: LineCounter): SourceLocation {
   const line = !isNode(node) || node.range === undefined || node.range === null ? 1 : lineCounter.linePos(node.range[0]).line;
   return { line, snippet: source.split(/\r?\n/)[line - 1]?.trim() ?? "" };
+}
+
+function locationsForFields<Field extends string>(
+  map: YAMLMap<unknown, unknown>,
+  fields: readonly Field[],
+  source: string,
+  lineCounter: LineCounter,
+): Partial<Record<Field, SourceLocation>> {
+  return Object.fromEntries(fields.flatMap((field) => {
+    const pair = findPair(map, field);
+    return pair === undefined ? [] : [[field, locationFor(pair.key, source, lineCounter)]];
+  })) as Partial<Record<Field, SourceLocation>>;
 }
 
 function structureFailure(
