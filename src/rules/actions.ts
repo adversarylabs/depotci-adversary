@@ -28,8 +28,7 @@ export function analyzeActions(workflow: DepotWorkflow): Detection[] {
           job,
           undefined,
           job.id,
-          job.location.line,
-          job.location.snippet,
+          job.fieldLocations.uses ?? job.location,
           parsed.ownerRepository,
           parsed.ref,
         ));
@@ -45,8 +44,7 @@ export function analyzeActions(workflow: DepotWorkflow): Detection[] {
             job,
             step,
             `${job.id}/${step.name}`,
-            step.location.line,
-            step.location.snippet,
+            step.fieldLocations.uses ?? step.location,
             parsed.ownerRepository,
             parsed.ref,
           ));
@@ -82,8 +80,7 @@ function unpinnedDetection(
   job: WorkflowJob,
   step: WorkflowStep | undefined,
   subject: string,
-  line: number,
-  snippet: string,
+  location: { line: number; snippet: string },
   ownerRepository: string,
   ref: string,
 ): Detection {
@@ -98,8 +95,8 @@ function unpinnedDetection(
         ? Severity.Medium
         : Severity.Low,
     file: workflow.path,
-    line,
-    snippet,
+    line: location.line,
+    snippet: location.snippet,
     label: `${subject} uses ${ownerRepository}@${ref}`,
     data: {
       workflow: workflow.name,
@@ -114,6 +111,9 @@ function unpinnedDetection(
       secretNames: authority.secretNames,
       authorityReasons: authority.reasons,
     },
+    ...(authority.tier === "routine"
+      ? { locality: { kind: "direct" as const, anchors: [location.line] } }
+      : {}),
   };
 }
 

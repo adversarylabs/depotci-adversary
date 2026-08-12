@@ -11,6 +11,10 @@ export interface Detection {
   snippet: string;
   label: string;
   data: Record<string, unknown>;
+  locality?: {
+    kind: "direct";
+    anchors: number[];
+  };
 }
 
 export type RuleId =

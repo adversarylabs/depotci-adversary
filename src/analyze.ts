@@ -1,3 +1,5 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { Severity, type RuleContext } from "@adversarylabs/sdk";
 import { type DiscoveryResult } from "./discover.js";
 import { type DepotWorkflow, type RepositoryContext, type WorkflowStep, isRecord } from "./model.js";
@@ -10,11 +12,13 @@ import { analyzeSecurity } from "./rules/security.js";
 import { type Detection } from "./rules/types.js";
 import { materialAssessment, primaryOpportunities, reportPrimaryOpportunities } from "./synthesis.js";
 
-export function analyzeRepository(
+const execute = promisify(execFile);
+
+export async function analyzeRepository(
   ctx: RuleContext,
   discovery: DiscoveryResult,
   repository: RepositoryContext,
-): void {
+): Promise<void> {
   const detections: Detection[] = discovery.failures.map((failure) => ({
     ruleId: "depotci.workflow.parse-error",
     subject: failure.path,
@@ -34,12 +38,87 @@ export function analyzeRepository(
   }
 
   detections.sort(compareDetections);
-  for (const detection of detections) {
+  const eligibleDetections = await changeLocalDetections(ctx, detections);
+  for (const detection of eligibleDetections) {
     ctx.observe(observationFor(detection));
   }
 
   reportPositives(ctx, discovery.workflows, detections);
-  reportReview(ctx, discovery, detections);
+  reportReview(ctx, discovery, eligibleDetections);
+}
+
+async function changeLocalDetections(ctx: RuleContext, detections: Detection[]): Promise<Detection[]> {
+  if (ctx.change === null || ctx.change.scanMode === "all") {
+    return detections;
+  }
+
+  const changedFiles = new Set(ctx.change.changedFiles.map(normalizePath));
+  const directPaths = [...new Set(detections
+    .filter((detection) => detection.locality?.kind === "direct")
+    .map((detection) => normalizePath(detection.file))
+    .filter((path) => changedFiles.has(path)))];
+  const changedLines = new Map<string, Set<number> | undefined>();
+  await Promise.all(directPaths.map(async (path) => {
+    changedLines.set(path, await changedLineNumbers(ctx, path));
+  }));
+
+  return detections.filter((detection) => {
+    if (detection.locality?.kind !== "direct") {
+      return true;
+    }
+    const path = normalizePath(detection.file);
+    if (!changedFiles.has(path)) {
+      return false;
+    }
+    const lines = changedLines.get(path);
+    return lines === undefined || detection.locality.anchors.some((line) => lines.has(line));
+  });
+}
+
+async function changedLineNumbers(ctx: RuleContext, path: string): Promise<Set<number> | undefined> {
+  const base = ctx.change?.baseRef;
+  if (base === undefined || !(await existsAtRevision(ctx.repoPath, base, path))) {
+    return undefined;
+  }
+
+  const args = ["diff", "--unified=0", base];
+  const head = ctx.change?.headRef;
+  if (head !== undefined && !ctx.change?.worktree) {
+    args.push(head);
+  }
+  args.push("--", path);
+  try {
+    const { stdout } = await execute("git", ["-C", ctx.repoPath, ...args], {
+      encoding: "utf8",
+      maxBuffer: 8 * 1024 * 1024,
+    });
+    const lines = new Set<number>();
+    for (const match of stdout.matchAll(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/gm)) {
+      const start = Number(match[1]);
+      const count = match[2] === undefined ? 1 : Number(match[2]);
+      for (let line = start; line < start + count; line += 1) {
+        lines.add(line);
+      }
+    }
+    return lines;
+  } catch {
+    return new Set<number>();
+  }
+}
+
+async function existsAtRevision(repoPath: string, revision: string, path: string): Promise<boolean> {
+  try {
+    await execute("git", ["-C", repoPath, "cat-file", "-e", `${revision}:${path}`], {
+      maxBuffer: 1024 * 1024,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function normalizePath(path: string): string {
+  return path.replaceAll("\\", "/").replace(/^\.\//, "");
 }
 
 function reportPositives(ctx: RuleContext, workflows: DepotWorkflow[], detections: Detection[]): void {

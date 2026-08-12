@@ -57,6 +57,9 @@ function sharedCoreDetections(workflow: DepotWorkflow, repoPath: string): Detect
       snippet: hit.snippet,
       label: hit.label,
       data: { ...hit.data, workflow: workflow.name, sharedCore: true },
+      ...(hit.key === "script-injection" || hit.key === "runs-on-expression"
+        ? { locality: { kind: "direct" as const, anchors: [hit.line] } }
+        : {}),
     });
   }
   return out;
