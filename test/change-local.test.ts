@@ -9,7 +9,7 @@ import { createApp } from "../src/index.ts";
 
 const execute = promisify(execFile);
 
-test("an unrelated workflow edit suppresses a legacy direct finding but preserves holistic checks", async () => {
+test("an unrelated edit keeps holistic checks for the changed workflow", async () => {
   const repo = await repositoryWithWorkflow(workflow("actions/checkout@v4", "old diagnostic"));
   const path = ".depot/workflows/ci.yml";
   await writeFile(join(repo, path), workflow("actions/checkout@v4", "new diagnostic"));
@@ -17,6 +17,31 @@ test("an unrelated workflow edit suppresses a legacy direct finding but preserve
   const result = await changedReview(repo, [path]);
   assert.equal(result.findings.some((finding) => finding.ruleId === "depotci.action.unpinned"), false);
   assert.equal(result.findings.some((finding) => finding.ruleId === "depotci.job.missing-timeout"), true);
+});
+
+test("change mode suppresses findings from unchanged workflows", async () => {
+  const repo = await repositoryWithWorkflow(workflow("actions/checkout@v4", "changed diagnostic"));
+  const unchangedPath = ".depot/workflows/legacy.yml";
+  await writeFile(join(repo, unchangedPath), workflow("actions/checkout@v4", "legacy diagnostic"));
+  await execute("git", ["add", unchangedPath], { cwd: repo });
+  await execute("git", ["commit", "--quiet", "-m", "add legacy workflow"], { cwd: repo });
+
+  const changedPath = ".depot/workflows/ci.yml";
+  await writeFile(join(repo, changedPath), workflow("actions/checkout@v4", "updated diagnostic"));
+
+  const result = await changedReview(repo, [changedPath]);
+  assert.equal(result.findings.some((finding) =>
+    finding.evidence.some((evidence) => evidence.location?.file === unchangedPath)), false);
+});
+
+test("all mode includes findings from every workflow", async () => {
+  const repo = await repositoryWithWorkflow(workflow("actions/checkout@v4", "changed diagnostic"));
+  const secondPath = ".depot/workflows/legacy.yml";
+  await writeFile(join(repo, secondPath), workflow("actions/checkout@v4", "legacy diagnostic"));
+
+  const result = await fullReview(repo);
+  assert.equal(result.findings.some((finding) =>
+    finding.evidence.some((evidence) => evidence.location?.file === secondPath)), true);
 });
 
 test("a changed action reference remains eligible with unchanged workflow context", async () => {
@@ -122,6 +147,21 @@ async function changedReview(repoPath: string, changedFiles: string[]) {
         head_ref: "WORKTREE",
         scan_mode: "changed",
         changed_files: changedFiles,
+      },
+    },
+  });
+}
+
+async function fullReview(repoPath: string) {
+  return createApp().run({
+    input: {
+      source: { path: repoPath },
+      change: {
+        type: "diff",
+        base_ref: "HEAD",
+        head_ref: "WORKTREE",
+        scan_mode: "all",
+        changed_files: [],
       },
     },
   });

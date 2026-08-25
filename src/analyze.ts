@@ -63,12 +63,12 @@ async function changeLocalDetections(ctx: RuleContext, detections: Detection[]):
   }));
 
   return detections.filter((detection) => {
-    if (detection.locality?.kind !== "direct") {
-      return true;
-    }
     const path = normalizePath(detection.file);
     if (!changedFiles.has(path)) {
       return false;
+    }
+    if (detection.locality?.kind !== "direct") {
+      return true;
     }
     const lines = changedLines.get(path);
     return lines === undefined || detection.locality.anchors.some((line) => lines.has(line));
