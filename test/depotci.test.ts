@@ -232,6 +232,12 @@ test("clean workflows produce concise positives and no material findings", async
   ]);
 });
 
+test("immutable pull-request feedback jobs may post reviews without a broad-permissions finding", async () => {
+  const output = await review("pr-review", { raw: true });
+  assert.equal(output.findings.some((item) => item.ruleId === "depotci.permissions.broad"), false);
+  assert.equal(output.findings.some((item) => item.ruleId === "depotci.action.unpinned"), false);
+});
+
 test("finding and evidence ordering is deterministic", async () => {
   const first = await review("unsafe-pull-request", { raw: true });
   const second = await review("unsafe-pull-request", { raw: true });

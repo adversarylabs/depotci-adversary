@@ -197,6 +197,9 @@ function broadPermissions(workflow: DepotWorkflow): Detection[] {
     if (writes.length === 0) {
       continue;
     }
+    if (isNarrowPullRequestFeedbackJob(workflow, job, writes)) {
+      continue;
+    }
     if (!isReleaseJob(job) || workflow.events.has("pull_request") || workflow.events.has("pull_request_target") || writes.includes("write-all")) {
       detections.push({
         ruleId: "depotci.permissions.broad",
@@ -211,6 +214,27 @@ function broadPermissions(workflow: DepotWorkflow): Detection[] {
     }
   }
   return detections;
+}
+
+function isNarrowPullRequestFeedbackJob(workflow: DepotWorkflow, job: WorkflowJob, writes: string[]): boolean {
+  if (!workflow.events.has("pull_request") || workflow.events.has("pull_request_target")) {
+    return false;
+  }
+  if (!writes.includes("pull-requests") || writes.some((scope) => scope !== "id-token" && scope !== "pull-requests")) {
+    return false;
+  }
+  if (!/\b(?:review|comment|feedback|annotat)/i.test(`${job.id} ${job.name}`)) {
+    return false;
+  }
+  return job.steps.every((step) => step.run === undefined && isImmutableOrLocalAction(step.uses));
+}
+
+function isImmutableOrLocalAction(uses: string | undefined): boolean {
+  if (uses === undefined || uses.startsWith("./")) {
+    return true;
+  }
+  const separator = uses.lastIndexOf("@");
+  return separator > 0 && /^[0-9a-f]{40}$/i.test(uses.slice(separator + 1));
 }
 
 function unsafeSecretUses(step: WorkflowStep): string[] {
