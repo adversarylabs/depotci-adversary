@@ -7,6 +7,7 @@ import {
 import { createApp } from "../src/index.ts";
 import { discoverDepotWorkflows } from "../src/discover.ts";
 import { parseDepotWorkflow } from "../src/parser.ts";
+import { analyzeActions } from "../src/rules/actions.ts";
 
 function fixturePath(name: string): string {
   return new URL(`./fixtures/${name}`, import.meta.url).pathname;
@@ -58,6 +59,79 @@ test("routine unpinned action occurrences share one remediation group while loca
   const finding = output.findings.find((item) => item.ruleId === "depotci.action.unpinned");
   assert.ok(finding);
   assert.equal(finding.evidence.length, 2);
+});
+
+test("checks explicit inputs against the exact pinned Depot action contract", async () => {
+  const invalid = await review("unsupported-action-input");
+  const finding = invalid.findings.find((item) => item.ruleId === "depotci.action.unsupported-input");
+  assert.ok(finding);
+  assert.equal(finding.evidence[0]?.location?.file, ".depot/workflows/pr.yml");
+  assert.equal(finding.evidence[0]?.location?.line, 13);
+  assert.equal(finding.evidence[0]?.data?.input, "write-lock");
+  assert.deepEqual(finding.evidence[0]?.data?.supportedInputs, ["debug", "name", "path"]);
+  assert.equal(
+    finding.evidence[0]?.data?.contractSource,
+    "https://github.com/depot/cache-mount/blob/v1.2.1/action.yml",
+  );
+});
+
+test("keeps the source-derived writable cache-mount configuration quiet", async () => {
+  const output = await review("action-input-contract");
+  assert.equal(output.findings.some((item) => item.ruleId === "depotci.action.unsupported-input"), false);
+  assert.equal(output.findings.some((item) => /write-lock/i.test(JSON.stringify(item))), false);
+});
+
+test("fails closed when the action revision or action path lacks an exact contract", () => {
+  const cases = [
+    "depot/cache-mount@v1.2.1",
+    "depot/cache-mount@0123456789012345678901234567890123456789",
+    "depot/cache-mount/subpath@c4ccf77f90f7fa7df6a002813c0b13f6a5943063",
+  ];
+  for (const action of cases) {
+    const parsed = parseDepotWorkflow(".depot/workflows/pr.yml", `name: PR
+on: pull_request
+jobs:
+  review:
+    runs-on: depot-ubuntu-latest
+    steps:
+      - uses: ${action}
+        with:
+          path: /mnt/cache
+          name: cache
+          write-lock: true
+`);
+    assert.equal(parsed.kind, "workflow");
+    if (parsed.kind === "workflow") {
+      assert.equal(
+        analyzeActions(parsed.workflow).some((item) => item.ruleId === "depotci.action.unsupported-input"),
+        false,
+      );
+    }
+  }
+});
+
+test("fails closed when action inputs are inherited through a YAML merge", () => {
+  const parsed = parseDepotWorkflow(".depot/workflows/pr.yml", `name: PR
+on: pull_request
+inputs: &cache-inputs
+  path: /mnt/cache
+  name: cache
+  write-lock: true
+jobs:
+  review:
+    runs-on: depot-ubuntu-latest
+    steps:
+      - uses: depot/cache-mount@c4ccf77f90f7fa7df6a002813c0b13f6a5943063
+        with:
+          <<: *cache-inputs
+`);
+  assert.equal(parsed.kind, "workflow");
+  if (parsed.kind === "workflow") {
+    assert.equal(
+      analyzeActions(parsed.workflow).some((item) => item.ruleId === "depotci.action.unsupported-input"),
+      false,
+    );
+  }
 });
 
 test("action findings group by remediation and prioritize production authority", async () => {

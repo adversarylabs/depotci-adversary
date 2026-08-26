@@ -6,6 +6,22 @@ import { type Detection } from "./types.js";
 const FULL_COMMIT_SHA = /^[0-9a-f]{40}$/i;
 const DELIVERY_ACTION = /\b(?:auth|attest|build-push|credential|deploy|login|publish|release|sign)\b/i;
 
+interface PinnedActionContract {
+  action: string;
+  ref: string;
+  release: string;
+  inputs: readonly string[];
+  metadataUrl: string;
+}
+
+const PINNED_ACTION_CONTRACTS: readonly PinnedActionContract[] = [{
+  action: "depot/cache-mount",
+  ref: "c4ccf77f90f7fa7df6a002813c0b13f6a5943063",
+  release: "v1.2.1",
+  inputs: ["debug", "name", "path"],
+  metadataUrl: "https://github.com/depot/cache-mount/blob/v1.2.1/action.yml",
+}];
+
 type AuthorityTier = "privileged-delivery" | "privileged" | "delivery" | "routine";
 
 interface ActionAuthority {
@@ -49,6 +65,9 @@ export function analyzeActions(workflow: DepotWorkflow): Detection[] {
             parsed.ref,
           ));
         }
+        if (parsed !== undefined) {
+          detections.push(...unsupportedActionInputs(workflow, job, step, parsed.path, parsed.ref));
+        }
       }
 
       detections.push(...mutableRunInputs(workflow, job.id, step.name, step.run, step.location.line, step.location.snippet));
@@ -58,7 +77,7 @@ export function analyzeActions(workflow: DepotWorkflow): Detection[] {
   return detections;
 }
 
-function parseExternalReference(uses: string): { ownerRepository: string; ref: string } | undefined {
+function parseExternalReference(uses: string): { ownerRepository: string; path: string; ref: string } | undefined {
   const value = uses.trim();
   if (value.startsWith("./") || value.startsWith("../") || value.startsWith("docker://")) {
     return undefined;
@@ -72,7 +91,47 @@ function parseExternalReference(uses: string): { ownerRepository: string; ref: s
   if (parts.length < 2) {
     return undefined;
   }
-  return { ownerRepository: `${parts[0]}/${parts[1]}`, ref: value.slice(at + 1) };
+  return { ownerRepository: `${parts[0]}/${parts[1]}`, path, ref: value.slice(at + 1) };
+}
+
+function unsupportedActionInputs(
+  workflow: DepotWorkflow,
+  job: WorkflowJob,
+  step: WorkflowStep,
+  action: string,
+  ref: string,
+): Detection[] {
+  const contract = PINNED_ACTION_CONTRACTS.find((candidate) =>
+    candidate.action.toLowerCase() === action.toLowerCase() && candidate.ref.toLowerCase() === ref.toLowerCase());
+  if (contract === undefined) {
+    return [];
+  }
+
+  const supported = new Set(contract.inputs.map((input) => input.toLowerCase()));
+  return Object.entries(step.inputLocations)
+    .filter(([input]) => !supported.has(input.toLowerCase()))
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([input, location]) => ({
+      ruleId: "depotci.action.unsupported-input",
+      subject: `${contract.action}:${input}`,
+      groupKey: `depotci.action.unsupported-input:${contract.action}`,
+      file: workflow.path,
+      line: location.line,
+      snippet: location.snippet,
+      label: `${job.id}/${step.name} passes unsupported input ${input} to ${contract.action}@${contract.release}`,
+      data: {
+        workflow: workflow.name,
+        job: job.id,
+        step: step.name,
+        action: contract.action,
+        reference: ref,
+        release: contract.release,
+        input,
+        supportedInputs: contract.inputs,
+        contractSource: contract.metadataUrl,
+      },
+      locality: { kind: "direct" as const, anchors: [location.line] },
+    }));
 }
 
 function unpinnedDetection(

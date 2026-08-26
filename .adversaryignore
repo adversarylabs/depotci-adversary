@@ -1,0 +1,11 @@
+src/
+test/
+scripts/
+coverage/
+node_modules/
+.depot/
+.adversary-train/
+tsconfig.json
+AGENTS.md
+.gitignore
+.git
