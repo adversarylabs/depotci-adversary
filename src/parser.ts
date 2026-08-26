@@ -243,7 +243,9 @@ function locationsForMappingKeys(
   }
   return Object.fromEntries(pair.value.items.flatMap((item) => {
     const key = scalarString(item.key);
-    return key === undefined ? [] : [[key, locationFor(item.key, source, lineCounter)]];
+    return key === undefined || /\$\{\{|\}\}/.test(key)
+      ? []
+      : [[key, locationFor(item.key, source, lineCounter)]];
   }));
 }
 

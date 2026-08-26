@@ -17080,6 +17080,224 @@ function expressionText(value) {
   return JSON.stringify(value);
 }
 
+// src/parser.ts
+var import_yaml2 = __toESM(require_dist(), 1);
+function parseDepotWorkflow(path, source) {
+  const lineCounter = new import_yaml2.LineCounter();
+  const document = (0, import_yaml2.parseDocument)(source, {
+    lineCounter,
+    prettyErrors: false,
+    strict: true,
+    uniqueKeys: true
+  });
+  if (document.errors.length > 0) {
+    const error = document.errors[0];
+    const position = error.linePos?.[0] ?? lineCounter.linePos(error.pos[0]);
+    return {
+      kind: "failure",
+      failure: failure(path, source, position.line, `YAML ${error.code.toLowerCase().replaceAll("_", " ")}: ${cleanErrorMessage(error.message)}`, position.col)
+    };
+  }
+  if (!(0, import_yaml2.isMap)(document.contents)) {
+    return { kind: "unsupported" };
+  }
+  const root = document.contents;
+  const jobsPair = findPair(root, "jobs");
+  if (jobsPair === void 0) {
+    return { kind: "unsupported" };
+  }
+  if (!(0, import_yaml2.isMap)(jobsPair.value)) {
+    return structureFailure(path, source, jobsPair.value ?? jobsPair.key, lineCounter, "The jobs field must be a mapping of job IDs to job definitions.");
+  }
+  let raw;
+  try {
+    raw = toRecord(document.toJS({ maxAliasCount: 50 }));
+  } catch (error) {
+    return {
+      kind: "failure",
+      failure: failure(
+        path,
+        source,
+        1,
+        `The workflow could not be normalized safely: ${error instanceof Error ? error.message : "unknown YAML conversion error"}`
+      )
+    };
+  }
+  const jobs = [];
+  let supportedJobCount = 0;
+  for (const pair of jobsPair.value.items) {
+    const id = scalarString(pair.key);
+    if (id === void 0 || id.length === 0) {
+      return structureFailure(path, source, pair.key, lineCounter, "Every job must have a string job ID.");
+    }
+    if (!(0, import_yaml2.isMap)(pair.value)) {
+      return structureFailure(path, source, pair.value ?? pair.key, lineCounter, `Job ${id} must be a mapping.`);
+    }
+    const parsed = parseJob(path, source, id, pair.value, lineCounter);
+    if (parsed.kind === "failure") {
+      return parsed;
+    }
+    jobs.push(parsed.job);
+    if (parsed.job.runsOn !== void 0 || parsed.job.uses !== void 0 || parsed.job.steps.length > 0) {
+      supportedJobCount += 1;
+    }
+  }
+  if (jobs.length === 0 || supportedJobCount === 0) {
+    return { kind: "unsupported" };
+  }
+  const name = stringValue(raw.name) ?? filenameWithoutExtension(path);
+  const workflow = {
+    path,
+    name,
+    events: parseEvents(raw.on),
+    permissions: raw.permissions,
+    env: toRecord(raw.env),
+    concurrency: raw.concurrency,
+    jobs: jobs.sort((left, right) => left.id.localeCompare(right.id)),
+    raw,
+    source,
+    location: locationFor(root, source, lineCounter),
+    fieldLocations: Object.fromEntries(
+      ["on", "permissions", "env", "concurrency"].flatMap((field) => {
+        const pair = findPair(root, field);
+        return pair === void 0 ? [] : [[field, locationFor(pair.key, source, lineCounter)]];
+      })
+    )
+  };
+  return { kind: "workflow", workflow };
+}
+function parseJob(path, source, id, node, lineCounter) {
+  const raw = toRecord(node.toJSON());
+  const stepsPair = findPair(node, "steps");
+  const steps = [];
+  if (stepsPair !== void 0) {
+    if (!(0, import_yaml2.isSeq)(stepsPair.value)) {
+      return structureFailure(path, source, stepsPair.value ?? stepsPair.key, lineCounter, `Job ${id} has a steps field that is not a sequence.`);
+    }
+    for (const [index, item] of stepsPair.value.items.entries()) {
+      if (!(0, import_yaml2.isMap)(item)) {
+        return structureFailure(path, source, item, lineCounter, `Step ${index + 1} in job ${id} must be a mapping.`);
+      }
+      const stepRaw = toRecord(item.toJSON());
+      steps.push({
+        index,
+        name: stringValue(stepRaw.name) ?? stringValue(stepRaw.uses) ?? `step ${index + 1}`,
+        id: stringValue(stepRaw.id),
+        uses: stringValue(stepRaw.uses),
+        run: stringValue(stepRaw.run),
+        if: stringValue(stepRaw.if),
+        continueOnError: stepRaw["continue-on-error"] === true,
+        env: toRecord(stepRaw.env),
+        with: toRecord(stepRaw.with),
+        raw: stepRaw,
+        location: locationFor(item, source, lineCounter),
+        fieldLocations: locationsForFields(item, ["uses"], source, lineCounter),
+        inputLocations: locationsForMappingKeys(item, "with", source, lineCounter)
+      });
+    }
+  }
+  const needsResult = parseNeeds(raw.needs);
+  if (needsResult === void 0) {
+    const needsPair = findPair(node, "needs");
+    return structureFailure(path, source, needsPair?.value ?? needsPair?.key ?? node, lineCounter, `Job ${id} has a needs field that is neither a job ID nor a sequence of job IDs.`);
+  }
+  return {
+    kind: "job",
+    job: {
+      id,
+      name: stringValue(raw.name) ?? id,
+      runsOn: stringValue(raw["runs-on"]),
+      timeoutMinutes: typeof raw["timeout-minutes"] === "number" || typeof raw["timeout-minutes"] === "string" ? raw["timeout-minutes"] : void 0,
+      needs: needsResult,
+      if: stringValue(raw.if),
+      permissions: raw.permissions,
+      env: toRecord(raw.env),
+      outputs: toRecord(raw.outputs),
+      steps,
+      uses: stringValue(raw.uses),
+      raw,
+      location: locationFor(node, source, lineCounter),
+      fieldLocations: locationsForFields(node, ["uses"], source, lineCounter)
+    }
+  };
+}
+function parseNeeds(value) {
+  if (value === void 0 || value === null) {
+    return [];
+  }
+  if (typeof value === "string") {
+    return [value];
+  }
+  if (Array.isArray(value) && value.every((item) => typeof item === "string")) {
+    return [...new Set(value)].sort();
+  }
+  return void 0;
+}
+function parseEvents(value) {
+  if (typeof value === "string") {
+    return /* @__PURE__ */ new Set([value]);
+  }
+  if (Array.isArray(value)) {
+    return new Set(value.filter((event) => typeof event === "string"));
+  }
+  if (isRecord2(value)) {
+    return new Set(Object.keys(value));
+  }
+  return /* @__PURE__ */ new Set();
+}
+function findPair(map, key) {
+  return map.items.find((pair) => scalarString(pair.key) === key);
+}
+function scalarString(node) {
+  return (0, import_yaml2.isScalar)(node) && typeof node.value === "string" ? node.value : void 0;
+}
+function locationFor(node, source, lineCounter) {
+  const line = !(0, import_yaml2.isNode)(node) || node.range === void 0 || node.range === null ? 1 : lineCounter.linePos(node.range[0]).line;
+  return { line, snippet: source.split(/\r?\n/)[line - 1]?.trim() ?? "" };
+}
+function locationsForFields(map, fields, source, lineCounter) {
+  return Object.fromEntries(fields.flatMap((field) => {
+    const pair = findPair(map, field);
+    return pair === void 0 ? [] : [[field, locationFor(pair.key, source, lineCounter)]];
+  }));
+}
+function locationsForMappingKeys(map, field, source, lineCounter) {
+  const pair = findPair(map, field);
+  if (pair === void 0 || !(0, import_yaml2.isMap)(pair.value)) {
+    return {};
+  }
+  if (pair.value.items.some((item) => scalarString(item.key) === "<<")) {
+    return {};
+  }
+  return Object.fromEntries(pair.value.items.flatMap((item) => {
+    const key = scalarString(item.key);
+    return key === void 0 || /\$\{\{|\}\}/.test(key) ? [] : [[key, locationFor(item.key, source, lineCounter)]];
+  }));
+}
+function structureFailure(path, source, node, lineCounter, message) {
+  const location = locationFor(node, source, lineCounter);
+  return { kind: "failure", failure: failure(path, source, location.line, message) };
+}
+function failure(path, source, line, message, column) {
+  return {
+    path,
+    message,
+    line,
+    column,
+    snippet: source.split(/\r?\n/)[line - 1]?.trim() ?? ""
+  };
+}
+function cleanErrorMessage(message) {
+  return message.replace(/ at line \d+, column \d+.*$/s, "").trim();
+}
+function toRecord(value) {
+  return isRecord2(value) ? value : {};
+}
+function filenameWithoutExtension(path) {
+  const filename = path.split("/").pop() ?? path;
+  return filename.replace(/\.ya?ml$/i, "");
+}
+
 // src/rules/helpers.ts
 var IMPORTANT_WORK_PATTERN = /\b(?:build|test|integration|e2e|scan|audit|publish|release|deploy|push|upload|sign|attest|migrat|wait|docker|buildx|cargo|pytest|go test|npm (?:test|publish)|pnpm (?:test|publish)|yarn (?:test|publish))\b/i;
 var LONG_JOB_IDENTITY = /\b(?:build|integration|e2e|scan|audit|publish|release|deploy|coverage|race|smoke|tooling|migration)\b/i;
@@ -17259,6 +17477,9 @@ function unsupportedActionInputs(workflow, job, step, action, ref) {
       workflow: workflow.name,
       job: job.id,
       step: step.name,
+      stepId: step.id,
+      stepIndex: step.index,
+      stepHasExplicitName: typeof step.raw.name === "string",
       action: contract.action,
       reference: ref,
       release: contract.release,
@@ -18826,6 +19047,10 @@ async function changeLocalDetections(ctx, detections) {
   await Promise.all(directPaths.map(async (path) => {
     changedLines.set(path, await changedLineNumbers(ctx, path));
   }));
+  const unsupportedInputEligibility = /* @__PURE__ */ new Map();
+  await Promise.all(detections.filter((detection) => detection.ruleId === "depotci.action.unsupported-input").map(async (detection) => {
+    unsupportedInputEligibility.set(detection, await unsupportedActionInputChanged(ctx, detection));
+  }));
   return detections.filter((detection) => {
     const path = normalizePath3(detection.file);
     if (!changedFiles.has(path)) {
@@ -18834,9 +19059,69 @@ async function changeLocalDetections(ctx, detections) {
     if (detection.locality?.kind !== "direct") {
       return true;
     }
+    if (detection.ruleId === "depotci.action.unsupported-input") {
+      return unsupportedInputEligibility.get(detection) ?? false;
+    }
     const lines = changedLines.get(path);
     return lines === void 0 || detection.locality.anchors.some((line) => lines.has(line));
   });
+}
+async function unsupportedActionInputChanged(ctx, detection) {
+  const base = ctx.change?.baseRef;
+  if (base === void 0) {
+    return true;
+  }
+  const priorSource = await readAtRevision(ctx.repoPath, base, detection.file);
+  if (priorSource === void 0) {
+    return true;
+  }
+  const parsed = parseDepotWorkflow(detection.file, priorSource);
+  if (parsed.kind !== "workflow") {
+    return true;
+  }
+  const jobId = stringData(detection.data.job);
+  const action = stringData(detection.data.action);
+  const reference = stringData(detection.data.reference);
+  const input = stringData(detection.data.input);
+  const stepIndex = numberData(detection.data.stepIndex);
+  if (jobId === void 0 || action === void 0 || reference === void 0 || input === void 0) {
+    return false;
+  }
+  const job = parsed.workflow.jobs.find((candidate) => candidate.id === jobId);
+  if (job === void 0) {
+    return true;
+  }
+  const stepId = stringData(detection.data.stepId);
+  const stepName = stringData(detection.data.step);
+  const hasExplicitName = detection.data.stepHasExplicitName === true;
+  let priorStep = stepId === void 0 ? void 0 : uniqueStep(job.steps.filter((candidate) => candidate.id === stepId));
+  if (priorStep === void 0 && hasExplicitName && stepName !== void 0) {
+    priorStep = uniqueStep(job.steps.filter((candidate) => candidate.raw.name === stepName));
+  }
+  if (priorStep === void 0) {
+    const exactSemanticCandidates = job.steps.filter((candidate) => sameActionReference(candidate.uses, action, reference) && hasExplicitInput(candidate, input));
+    priorStep = uniqueStep(exactSemanticCandidates) ?? (stepIndex === void 0 ? void 0 : job.steps[stepIndex]);
+  }
+  if (priorStep === void 0) {
+    return true;
+  }
+  return !sameActionReference(priorStep.uses, action, reference) || !hasExplicitInput(priorStep, input);
+}
+function uniqueStep(steps) {
+  return steps.length === 1 ? steps[0] : void 0;
+}
+function sameActionReference(uses, action, reference) {
+  return uses?.trim().toLowerCase() === `${action}@${reference}`.toLowerCase();
+}
+function hasExplicitInput(step, input) {
+  const normalized = input.toLowerCase();
+  return Object.keys(step.inputLocations).some((candidate) => candidate.toLowerCase() === normalized);
+}
+function stringData(value) {
+  return typeof value === "string" ? value : void 0;
+}
+function numberData(value) {
+  return typeof value === "number" ? value : void 0;
 }
 async function changedLineNumbers(ctx, path) {
   const base = ctx.change?.baseRef;
@@ -18875,6 +19160,17 @@ async function existsAtRevision(repoPath, revision, path) {
     return true;
   } catch {
     return false;
+  }
+}
+async function readAtRevision(repoPath, revision, path) {
+  try {
+    const { stdout } = await execute("git", ["-C", repoPath, "show", `${revision}:${path}`], {
+      encoding: "utf8",
+      maxBuffer: 8 * 1024 * 1024
+    });
+    return stdout;
+  } catch {
+    return void 0;
   }
 }
 function normalizePath3(path) {
@@ -19051,226 +19347,6 @@ function isDockerfilePath(path) {
 // src/discover.ts
 import { readFile as readFile5, readdir as readdir4 } from "node:fs/promises";
 import { join as join5, sep as sep2 } from "node:path";
-
-// src/parser.ts
-var import_yaml2 = __toESM(require_dist(), 1);
-function parseDepotWorkflow(path, source) {
-  const lineCounter = new import_yaml2.LineCounter();
-  const document = (0, import_yaml2.parseDocument)(source, {
-    lineCounter,
-    prettyErrors: false,
-    strict: true,
-    uniqueKeys: true
-  });
-  if (document.errors.length > 0) {
-    const error = document.errors[0];
-    const position = error.linePos?.[0] ?? lineCounter.linePos(error.pos[0]);
-    return {
-      kind: "failure",
-      failure: failure(path, source, position.line, `YAML ${error.code.toLowerCase().replaceAll("_", " ")}: ${cleanErrorMessage(error.message)}`, position.col)
-    };
-  }
-  if (!(0, import_yaml2.isMap)(document.contents)) {
-    return { kind: "unsupported" };
-  }
-  const root = document.contents;
-  const jobsPair = findPair(root, "jobs");
-  if (jobsPair === void 0) {
-    return { kind: "unsupported" };
-  }
-  if (!(0, import_yaml2.isMap)(jobsPair.value)) {
-    return structureFailure(path, source, jobsPair.value ?? jobsPair.key, lineCounter, "The jobs field must be a mapping of job IDs to job definitions.");
-  }
-  let raw;
-  try {
-    raw = toRecord(document.toJS({ maxAliasCount: 50 }));
-  } catch (error) {
-    return {
-      kind: "failure",
-      failure: failure(
-        path,
-        source,
-        1,
-        `The workflow could not be normalized safely: ${error instanceof Error ? error.message : "unknown YAML conversion error"}`
-      )
-    };
-  }
-  const jobs = [];
-  let supportedJobCount = 0;
-  for (const pair of jobsPair.value.items) {
-    const id = scalarString(pair.key);
-    if (id === void 0 || id.length === 0) {
-      return structureFailure(path, source, pair.key, lineCounter, "Every job must have a string job ID.");
-    }
-    if (!(0, import_yaml2.isMap)(pair.value)) {
-      return structureFailure(path, source, pair.value ?? pair.key, lineCounter, `Job ${id} must be a mapping.`);
-    }
-    const parsed = parseJob(path, source, id, pair.value, lineCounter);
-    if (parsed.kind === "failure") {
-      return parsed;
-    }
-    jobs.push(parsed.job);
-    if (parsed.job.runsOn !== void 0 || parsed.job.uses !== void 0 || parsed.job.steps.length > 0) {
-      supportedJobCount += 1;
-    }
-  }
-  if (jobs.length === 0 || supportedJobCount === 0) {
-    return { kind: "unsupported" };
-  }
-  const name = stringValue(raw.name) ?? filenameWithoutExtension(path);
-  const workflow = {
-    path,
-    name,
-    events: parseEvents(raw.on),
-    permissions: raw.permissions,
-    env: toRecord(raw.env),
-    concurrency: raw.concurrency,
-    jobs: jobs.sort((left, right) => left.id.localeCompare(right.id)),
-    raw,
-    source,
-    location: locationFor(root, source, lineCounter),
-    fieldLocations: Object.fromEntries(
-      ["on", "permissions", "env", "concurrency"].flatMap((field) => {
-        const pair = findPair(root, field);
-        return pair === void 0 ? [] : [[field, locationFor(pair.key, source, lineCounter)]];
-      })
-    )
-  };
-  return { kind: "workflow", workflow };
-}
-function parseJob(path, source, id, node, lineCounter) {
-  const raw = toRecord(node.toJSON());
-  const stepsPair = findPair(node, "steps");
-  const steps = [];
-  if (stepsPair !== void 0) {
-    if (!(0, import_yaml2.isSeq)(stepsPair.value)) {
-      return structureFailure(path, source, stepsPair.value ?? stepsPair.key, lineCounter, `Job ${id} has a steps field that is not a sequence.`);
-    }
-    for (const [index, item] of stepsPair.value.items.entries()) {
-      if (!(0, import_yaml2.isMap)(item)) {
-        return structureFailure(path, source, item, lineCounter, `Step ${index + 1} in job ${id} must be a mapping.`);
-      }
-      const stepRaw = toRecord(item.toJSON());
-      steps.push({
-        index,
-        name: stringValue(stepRaw.name) ?? stringValue(stepRaw.uses) ?? `step ${index + 1}`,
-        id: stringValue(stepRaw.id),
-        uses: stringValue(stepRaw.uses),
-        run: stringValue(stepRaw.run),
-        if: stringValue(stepRaw.if),
-        continueOnError: stepRaw["continue-on-error"] === true,
-        env: toRecord(stepRaw.env),
-        with: toRecord(stepRaw.with),
-        raw: stepRaw,
-        location: locationFor(item, source, lineCounter),
-        fieldLocations: locationsForFields(item, ["uses"], source, lineCounter),
-        inputLocations: locationsForMappingKeys(item, "with", source, lineCounter)
-      });
-    }
-  }
-  const needsResult = parseNeeds(raw.needs);
-  if (needsResult === void 0) {
-    const needsPair = findPair(node, "needs");
-    return structureFailure(path, source, needsPair?.value ?? needsPair?.key ?? node, lineCounter, `Job ${id} has a needs field that is neither a job ID nor a sequence of job IDs.`);
-  }
-  return {
-    kind: "job",
-    job: {
-      id,
-      name: stringValue(raw.name) ?? id,
-      runsOn: stringValue(raw["runs-on"]),
-      timeoutMinutes: typeof raw["timeout-minutes"] === "number" || typeof raw["timeout-minutes"] === "string" ? raw["timeout-minutes"] : void 0,
-      needs: needsResult,
-      if: stringValue(raw.if),
-      permissions: raw.permissions,
-      env: toRecord(raw.env),
-      outputs: toRecord(raw.outputs),
-      steps,
-      uses: stringValue(raw.uses),
-      raw,
-      location: locationFor(node, source, lineCounter),
-      fieldLocations: locationsForFields(node, ["uses"], source, lineCounter)
-    }
-  };
-}
-function parseNeeds(value) {
-  if (value === void 0 || value === null) {
-    return [];
-  }
-  if (typeof value === "string") {
-    return [value];
-  }
-  if (Array.isArray(value) && value.every((item) => typeof item === "string")) {
-    return [...new Set(value)].sort();
-  }
-  return void 0;
-}
-function parseEvents(value) {
-  if (typeof value === "string") {
-    return /* @__PURE__ */ new Set([value]);
-  }
-  if (Array.isArray(value)) {
-    return new Set(value.filter((event) => typeof event === "string"));
-  }
-  if (isRecord2(value)) {
-    return new Set(Object.keys(value));
-  }
-  return /* @__PURE__ */ new Set();
-}
-function findPair(map, key) {
-  return map.items.find((pair) => scalarString(pair.key) === key);
-}
-function scalarString(node) {
-  return (0, import_yaml2.isScalar)(node) && typeof node.value === "string" ? node.value : void 0;
-}
-function locationFor(node, source, lineCounter) {
-  const line = !(0, import_yaml2.isNode)(node) || node.range === void 0 || node.range === null ? 1 : lineCounter.linePos(node.range[0]).line;
-  return { line, snippet: source.split(/\r?\n/)[line - 1]?.trim() ?? "" };
-}
-function locationsForFields(map, fields, source, lineCounter) {
-  return Object.fromEntries(fields.flatMap((field) => {
-    const pair = findPair(map, field);
-    return pair === void 0 ? [] : [[field, locationFor(pair.key, source, lineCounter)]];
-  }));
-}
-function locationsForMappingKeys(map, field, source, lineCounter) {
-  const pair = findPair(map, field);
-  if (pair === void 0 || !(0, import_yaml2.isMap)(pair.value)) {
-    return {};
-  }
-  if (pair.value.items.some((item) => scalarString(item.key) === "<<")) {
-    return {};
-  }
-  return Object.fromEntries(pair.value.items.flatMap((item) => {
-    const key = scalarString(item.key);
-    return key === void 0 ? [] : [[key, locationFor(item.key, source, lineCounter)]];
-  }));
-}
-function structureFailure(path, source, node, lineCounter, message) {
-  const location = locationFor(node, source, lineCounter);
-  return { kind: "failure", failure: failure(path, source, location.line, message) };
-}
-function failure(path, source, line, message, column) {
-  return {
-    path,
-    message,
-    line,
-    column,
-    snippet: source.split(/\r?\n/)[line - 1]?.trim() ?? ""
-  };
-}
-function cleanErrorMessage(message) {
-  return message.replace(/ at line \d+, column \d+.*$/s, "").trim();
-}
-function toRecord(value) {
-  return isRecord2(value) ? value : {};
-}
-function filenameWithoutExtension(path) {
-  const filename = path.split("/").pop() ?? path;
-  return filename.replace(/\.ya?ml$/i, "");
-}
-
-// src/discover.ts
 var MAX_DISCOVERY_FILES = 5e3;
 var SKIPPED_DIRECTORIES = /* @__PURE__ */ new Set([
   ".adversary",

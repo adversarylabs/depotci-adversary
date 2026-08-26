@@ -134,6 +134,28 @@ jobs:
   }
 });
 
+test("fails closed for a dynamic input key", () => {
+  const parsed = parseDepotWorkflow(".depot/workflows/pr.yml", `name: PR
+on: pull_request
+jobs:
+  review:
+    runs-on: depot-ubuntu-latest
+    steps:
+      - uses: depot/cache-mount@c4ccf77f90f7fa7df6a002813c0b13f6a5943063
+        with:
+          path: /mnt/cache
+          name: cache
+          \${{ inputs.cache_input }}: true
+`);
+  assert.equal(parsed.kind, "workflow");
+  if (parsed.kind === "workflow") {
+    assert.equal(
+      analyzeActions(parsed.workflow).some((item) => item.ruleId === "depotci.action.unsupported-input"),
+      false,
+    );
+  }
+});
+
 test("action findings group by remediation and prioritize production authority", async () => {
   const output = await review("review-synthesis", { raw: true });
   const findings = output.findings.filter((item) => item.ruleId === "depotci.action.unpinned");
