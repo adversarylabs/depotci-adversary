@@ -87,6 +87,55 @@ test("authority-dependent action findings remain holistic", async () => {
   );
 });
 
+test("an added unsupported pinned-action input is anchored to the input key", async () => {
+  const repo = await repositoryWithWorkflow(cacheMountWorkflow(""));
+  const path = ".depot/workflows/ci.yml";
+  await writeFile(join(repo, path), cacheMountWorkflow("          write-lock: true\n"));
+
+  const result = await changedReview(repo, [path]);
+  const finding = result.findings.find((item) => item.ruleId === "depotci.action.unsupported-input");
+  assert.ok(finding);
+  assert.equal(finding.evidence[0]?.data?.input, "write-lock");
+  assert.equal(finding.evidence[0]?.location?.line, 12);
+});
+
+test("an unrelated edit does not activate an existing unsupported action input", async () => {
+  const repo = await repositoryWithWorkflow(cacheMountWorkflow("          write-lock: true\n", "old diagnostic"));
+  const path = ".depot/workflows/ci.yml";
+  await writeFile(join(repo, path), cacheMountWorkflow("          write-lock: true\n", "new diagnostic"));
+
+  const result = await changedReview(repo, [path]);
+  assert.equal(result.findings.some((item) => item.ruleId === "depotci.action.unsupported-input"), false);
+});
+
+test("value-only and comment-only edits do not revive an existing unsupported input", async () => {
+  const original = cacheMountWorkflow("          write-lock: true\n");
+  for (const current of [
+    original.replace("write-lock: true", "write-lock: false"),
+    original.replace("write-lock: true", "write-lock: true # documentation"),
+  ]) {
+    const repo = await repositoryWithWorkflow(original);
+    const path = ".depot/workflows/ci.yml";
+    await writeFile(join(repo, path), current);
+    const result = await changedReview(repo, [path]);
+    assert.equal(result.findings.some((item) => item.ruleId === "depotci.action.unsupported-input"), false);
+  }
+});
+
+test("changing into the exact action contract activates an existing unsupported input", async () => {
+  const exact = "depot/cache-mount@c4ccf77f90f7fa7df6a002813c0b13f6a5943063";
+  for (const prior of [
+    "depot/cache-mount@v1.2.1",
+    "depot/cache-mount/subpath@c4ccf77f90f7fa7df6a002813c0b13f6a5943063",
+  ]) {
+    const repo = await repositoryWithWorkflow(cacheMountWorkflow("          write-lock: true\n", "diagnostic", prior));
+    const path = ".depot/workflows/ci.yml";
+    await writeFile(join(repo, path), cacheMountWorkflow("          write-lock: true\n", "diagnostic", exact));
+    const result = await changedReview(repo, [path]);
+    assert.equal(result.findings.some((item) => item.ruleId === "depotci.action.unsupported-input"), true);
+  }
+});
+
 async function repositoryWithWorkflow(source: string): Promise<string> {
   const repo = await emptyRepository();
   await mkdir(join(repo, ".depot/workflows"), { recursive: true });
@@ -134,6 +183,27 @@ jobs:
       - run: npm test
       - name: Diagnostic
         run: echo diagnostic
+`;
+}
+
+function cacheMountWorkflow(
+  extraInput: string,
+  diagnostic = "diagnostic",
+  action = "depot/cache-mount@c4ccf77f90f7fa7df6a002813c0b13f6a5943063",
+): string {
+  return `name: CI
+on: push
+jobs:
+  build:
+    runs-on: depot-ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: ${action}
+        with:
+          path: /mnt/cache
+          name: cache
+${extraInput}      - name: Diagnostic
+        run: echo ${JSON.stringify(diagnostic)}
 `;
 }
 

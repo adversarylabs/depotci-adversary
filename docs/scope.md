@@ -15,11 +15,13 @@ Review Depot CI workflows for security, correctness, reliability, caching, and p
 - Depot/CI workflow security and reliability
 - Caching mistakes that break correctness
 - Performance footguns in Depot CI
+- Inputs that contradict the exact metadata of a supported, immutable Depot action revision
 
 ## Out of scope (not a miss for this adversary)
 
 - App code
 - Pure GHA without Depot
+- Missing-input theories that are not proven by the exact pinned action metadata and primary documentation
 
 ## Factory grading rule
 

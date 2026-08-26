@@ -115,6 +115,7 @@ function opportunityFor(detection: Detection): string | undefined {
     "depotci.release.missing-gate": "Gate publishing and deployment on completed validation.",
     "depotci.workflow.concurrency": "Cancel superseded pull-request workflow runs.",
     "depotci.build.mutable-input": "Pin and verify remote code executed by CI.",
+    "depotci.action.unsupported-input": "Align action inputs with the exact pinned action contract.",
   };
   return opportunities[detection.ruleId];
 }
@@ -143,6 +144,7 @@ function operationalPriority(detection: Detection): number {
     "depotci.cache.unstable-key": 30,
     "depotci.build.cache-order": 25,
     "depotci.workflow.concurrency": 15,
+    "depotci.action.unsupported-input": 72,
   };
   return priorities[detection.ruleId] ?? 0;
 }

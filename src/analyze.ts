@@ -3,6 +3,7 @@ import { promisify } from "node:util";
 import { Severity, type RuleContext } from "@adversarylabs/sdk";
 import { type DiscoveryResult } from "./discover.js";
 import { type DepotWorkflow, type RepositoryContext, type WorkflowStep, isRecord } from "./model.js";
+import { parseDepotWorkflow } from "./parser.js";
 import { analyzeActions } from "./rules/actions.js";
 import { analyzeCaching } from "./rules/cache.js";
 import { defaultSeverity, observationFor } from "./rules/definitions.js";
@@ -62,6 +63,13 @@ async function changeLocalDetections(ctx: RuleContext, detections: Detection[]):
     changedLines.set(path, await changedLineNumbers(ctx, path));
   }));
 
+  const unsupportedInputEligibility = new Map<Detection, boolean>();
+  await Promise.all(detections
+    .filter((detection) => detection.ruleId === "depotci.action.unsupported-input")
+    .map(async (detection) => {
+      unsupportedInputEligibility.set(detection, await unsupportedActionInputChanged(ctx, detection));
+    }));
+
   return detections.filter((detection) => {
     const path = normalizePath(detection.file);
     if (!changedFiles.has(path)) {
@@ -70,9 +78,80 @@ async function changeLocalDetections(ctx: RuleContext, detections: Detection[]):
     if (detection.locality?.kind !== "direct") {
       return true;
     }
+    if (detection.ruleId === "depotci.action.unsupported-input") {
+      return unsupportedInputEligibility.get(detection) ?? false;
+    }
     const lines = changedLines.get(path);
     return lines === undefined || detection.locality.anchors.some((line) => lines.has(line));
   });
+}
+
+async function unsupportedActionInputChanged(ctx: RuleContext, detection: Detection): Promise<boolean> {
+  const base = ctx.change?.baseRef;
+  if (base === undefined) {
+    return true;
+  }
+  const priorSource = await readAtRevision(ctx.repoPath, base, detection.file);
+  if (priorSource === undefined) {
+    return true;
+  }
+  const parsed = parseDepotWorkflow(detection.file, priorSource);
+  if (parsed.kind !== "workflow") {
+    return true;
+  }
+
+  const jobId = stringData(detection.data.job);
+  const action = stringData(detection.data.action);
+  const reference = stringData(detection.data.reference);
+  const input = stringData(detection.data.input);
+  const stepIndex = numberData(detection.data.stepIndex);
+  if (jobId === undefined || action === undefined || reference === undefined || input === undefined) {
+    return false;
+  }
+  const job = parsed.workflow.jobs.find((candidate) => candidate.id === jobId);
+  if (job === undefined) {
+    return true;
+  }
+
+  const stepId = stringData(detection.data.stepId);
+  const stepName = stringData(detection.data.step);
+  const hasExplicitName = detection.data.stepHasExplicitName === true;
+  let priorStep = stepId === undefined
+    ? undefined
+    : uniqueStep(job.steps.filter((candidate) => candidate.id === stepId));
+  if (priorStep === undefined && hasExplicitName && stepName !== undefined) {
+    priorStep = uniqueStep(job.steps.filter((candidate) => candidate.raw.name === stepName));
+  }
+  if (priorStep === undefined) {
+    const exactSemanticCandidates = job.steps.filter((candidate) =>
+      sameActionReference(candidate.uses, action, reference) && hasExplicitInput(candidate, input));
+    priorStep = uniqueStep(exactSemanticCandidates) ?? (stepIndex === undefined ? undefined : job.steps[stepIndex]);
+  }
+  if (priorStep === undefined) {
+    return true;
+  }
+  return !sameActionReference(priorStep.uses, action, reference) || !hasExplicitInput(priorStep, input);
+}
+
+function uniqueStep(steps: WorkflowStep[]): WorkflowStep | undefined {
+  return steps.length === 1 ? steps[0] : undefined;
+}
+
+function sameActionReference(uses: string | undefined, action: string, reference: string): boolean {
+  return uses?.trim().toLowerCase() === `${action}@${reference}`.toLowerCase();
+}
+
+function hasExplicitInput(step: WorkflowStep, input: string): boolean {
+  const normalized = input.toLowerCase();
+  return Object.keys(step.inputLocations).some((candidate) => candidate.toLowerCase() === normalized);
+}
+
+function stringData(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function numberData(value: unknown): number | undefined {
+  return typeof value === "number" ? value : undefined;
 }
 
 async function changedLineNumbers(ctx: RuleContext, path: string): Promise<Set<number> | undefined> {
@@ -114,6 +193,18 @@ async function existsAtRevision(repoPath: string, revision: string, path: string
     return true;
   } catch {
     return false;
+  }
+}
+
+async function readAtRevision(repoPath: string, revision: string, path: string): Promise<string | undefined> {
+  try {
+    const { stdout } = await execute("git", ["-C", repoPath, "show", `${revision}:${path}`], {
+      encoding: "utf8",
+      maxBuffer: 8 * 1024 * 1024,
+    });
+    return stdout;
+  } catch {
+    return undefined;
   }
 }
 
