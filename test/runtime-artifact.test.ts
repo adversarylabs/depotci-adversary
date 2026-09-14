@@ -73,6 +73,6 @@ test("the published runtime executes without the development dependency tree", a
   const envelope = JSON.parse(await readFile(output, "utf8"));
   assert.equal(envelope.protocolVersion, 1);
   assert.equal(envelope.result.adversary.name, "depotci");
-  assert.equal(envelope.result.adversary.version, "0.0.21");
+  assert.equal(envelope.result.adversary.version, (JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8")) as { version: string }).version);
   assert.deepEqual(envelope.result.findings, []);
 });
