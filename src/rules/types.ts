@@ -19,6 +19,7 @@ export interface Detection {
 
 export type RuleId =
   | "depotci.workflow.parse-error"
+  | "depotci.workflow.actionlint"
   | "depotci.action.unpinned"
   | "depotci.action.unsupported-input"
   | "depotci.job.missing-timeout"

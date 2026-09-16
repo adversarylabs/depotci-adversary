@@ -17,6 +17,19 @@ interface RuleLanguage {
 
 const RULES: RuleLanguage[] = [
   {
+    id: "depotci.workflow.actionlint",
+    category: "correctness",
+    severity: Severity.Medium,
+    confidence: Confidence.High,
+    title: { singular: "Depot workflow fails static validation", plural: "Depot workflows fail static validation" },
+    summary: (count) => `actionlint found ${count} invalid or inconsistent Depot workflow configuration${count === 1 ? "" : "s"}.`,
+    whyItMatters: "Invalid workflow syntax, expressions, events, or job wiring can prevent CI from starting or make it behave differently than intended.",
+    impact: "Required validation, release, or deployment work may be skipped or fail before its jobs execute.",
+    recommendation: "Correct the reported actionlint diagnostic and rerun workflow validation.",
+    complexity: "small",
+    tags: ["workflow", "correctness", "actionlint"],
+  },
+  {
     id: "depotci.workflow.parse-error",
     category: "correctness",
     severity: Severity.Medium,

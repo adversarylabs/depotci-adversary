@@ -24,6 +24,8 @@ test("the published runtime executes without the development dependency tree", a
     "schemas/adversary.review.v1.schema.json",
     "THIRD_PARTY_NOTICES.md",
     "package.json",
+    "vendor/actionlint/actionlint.wasm",
+    "vendor/actionlint/wasm_exec.js",
   ];
   for (const path of runtimeFiles) {
     await execute("git", ["ls-files", "--error-unmatch", path], { cwd: projectRoot });
@@ -43,6 +45,7 @@ test("the published runtime executes without the development dependency tree", a
   const bundle = await readFile(entrypoint, "utf8");
   assert.doesNotMatch(bundle, /from\s+["'](?:@adversarylabs\/sdk|yaml)["']/);
   for (const path of runtimeFiles) {
+    if (path.endsWith(".wasm")) continue;
     const content = await readFile(join(artifact, path), "utf8");
     assert.doesNotMatch(content, /\/Users\/[^/\s]+|\/private\/tmp\/|[A-Za-z]:\\Users\\/);
   }
@@ -54,6 +57,8 @@ test("the published runtime executes without the development dependency tree", a
     "fast-uri",
     "json-schema-traverse",
     "yaml",
+    "actionlint",
+    "Go WebAssembly runtime",
   ]);
   for (const section of notices.split(/^## /m).slice(1)) {
     assert.ok(section.length > 300, `expected a full license text, got ${section.length} bytes`);
