@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { Severity, type RuleContext } from "@adversarylabs/sdk";
 import { type DiscoveryResult } from "./discover.js";
+import { ACTIONLINT_VERSION, runActionlint } from "./actionlint.js";
 import { type DepotWorkflow, type RepositoryContext, type WorkflowStep, isRecord } from "./model.js";
 import { parseDepotWorkflow } from "./parser.js";
 import { analyzeActions } from "./rules/actions.js";
@@ -32,6 +33,23 @@ export async function analyzeRepository(
   }));
 
   for (const workflow of discovery.workflows) {
+    for (const diagnostic of await runActionlint(workflow.path, workflow.source, depotRunnerLabels(workflow.source))) {
+      const line = Math.max(1, diagnostic.line);
+      detections.push({
+        ruleId: "depotci.workflow.actionlint",
+        subject: workflow.path,
+        groupKey: `depotci.workflow.actionlint:${workflow.path}`,
+        file: workflow.path,
+        line,
+        snippet: workflow.source.split(/\r?\n/)[line - 1]?.trim() ?? "",
+        label: diagnostic.message,
+        data: {
+          actionlintVersion: ACTIONLINT_VERSION,
+          kind: diagnostic.kind,
+          column: diagnostic.column,
+        },
+      });
+    }
     detections.push(...analyzeActions(workflow));
     detections.push(...analyzeJobs(workflow));
     detections.push(...analyzeCaching(workflow, repository));
@@ -46,6 +64,10 @@ export async function analyzeRepository(
 
   reportPositives(ctx, discovery.workflows, detections);
   reportReview(ctx, discovery, eligibleDetections);
+}
+
+function depotRunnerLabels(source: string): string[] {
+  return [...new Set([...source.matchAll(/\bdepot-[a-z0-9][a-z0-9._-]*/gi)].map((match) => match[0].toLowerCase()))].sort();
 }
 
 async function changeLocalDetections(ctx: RuleContext, detections: Detection[]): Promise<Detection[]> {

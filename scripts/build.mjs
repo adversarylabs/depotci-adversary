@@ -33,6 +33,10 @@ const noticeSections = await Promise.all(bundledPackages.map(async (name) => {
   const normalized = text.replaceAll("\r\n", "\n").split("\n").map((line) => line.trimEnd()).join("\n").trimEnd();
   return `## ${name} (${entry.license})\n\n${normalized}`;
 }));
+noticeSections.push(
+  `## actionlint (MIT)\n\n${(await readFile("vendor/actionlint/LICENSE", "utf8")).trim()}`,
+  `## Go WebAssembly runtime (BSD-3-Clause)\n\n${(await readFile("vendor/actionlint/GO_LICENSE", "utf8")).trim()}`,
+);
 await writeFile("THIRD_PARTY_NOTICES.md", `# Third-party notices\n\n${noticeSections.join("\n\n")}\n`);
 
 await mkdir("schemas", { recursive: true });

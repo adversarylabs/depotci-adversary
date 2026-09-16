@@ -19,7 +19,13 @@
 | `depotci.secret.scope-broad` | Critical | Secrets exposed to more jobs/steps than needed |
 | `depotci.step.failure-masked` | Medium | Failure masked (continue-on-error / always without care) |
 | `depotci.workflow.concurrency` | Medium | Missing or weak concurrency controls |
+| `depotci.workflow.actionlint` | Medium | Vendored actionlint reports invalid workflow syntax, expressions, events, permissions, runner labels, or job wiring |
 | `depotci.workflow.redundant-work` | Medium | Redundant work across jobs |
+
+`depotci.workflow.actionlint` runs actionlint 1.7.12 as an offline, portable
+WebAssembly component. Repository project loading, ShellCheck, and Pyflakes are
+disabled in the embedded mode; a standalone actionlint CI job can retain those
+broader integrations.
 
 ## Pinned action input contracts
 

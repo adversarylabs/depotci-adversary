@@ -17559,6 +17559,76 @@ function omitUndefined(value) {
 import { execFile as execFile2 } from "node:child_process";
 import { promisify as promisify2 } from "node:util";
 
+// src/actionlint.ts
+import { readFile as readFile6 } from "node:fs/promises";
+import { runInThisContext } from "node:vm";
+var ACTIONLINT_VERSION = "1.7.12";
+var runtime = globalThis;
+var initialization;
+var active = false;
+async function runActionlint(path, source, runnerLabels = []) {
+  await initialize();
+  if (active) throw new Error("actionlint WebAssembly runtime does not support concurrent checks");
+  const run = runtime.__runActionlint;
+  if (run === void 0) throw new Error("actionlint WebAssembly entrypoint is unavailable");
+  active = true;
+  try {
+    return await new Promise((resolve3, reject) => {
+      runtime.__actionlintResolve = (value) => {
+        try {
+          resolve3(parseErrors(value));
+        } catch (error) {
+          reject(error);
+        }
+      };
+      runtime.__actionlintReject = (message) => reject(new Error(`actionlint failed: ${message}`));
+      run(source, path, runnerLabels);
+    });
+  } finally {
+    active = false;
+    runtime.__actionlintResolve = void 0;
+    runtime.__actionlintReject = void 0;
+  }
+}
+function initialize() {
+  initialization ??= initializeRuntime();
+  return initialization;
+}
+async function initializeRuntime() {
+  const shimUrl = new URL("../vendor/actionlint/wasm_exec.js", import.meta.url);
+  const wasmUrl = new URL("../vendor/actionlint/actionlint.wasm", import.meta.url);
+  runInThisContext(await readFile6(shimUrl, "utf8"), { filename: shimUrl.pathname });
+  const Go = runtime.Go;
+  if (Go === void 0) throw new Error("vendored Go WebAssembly runtime did not initialize");
+  const go = new Go();
+  const module = await WebAssembly.compile(await readFile6(wasmUrl));
+  const instance = await WebAssembly.instantiate(module, go.importObject);
+  await new Promise((resolve3, reject) => {
+    runtime.__actionlintReady = resolve3;
+    void go.run(instance).then(
+      () => reject(new Error("actionlint WebAssembly runtime exited unexpectedly")),
+      reject
+    );
+  });
+  runtime.__actionlintReady = void 0;
+}
+function parseErrors(value) {
+  if (!Array.isArray(value)) throw new Error("actionlint returned a non-array result");
+  return value.map((item) => {
+    if (typeof item !== "object" || item === null) throw new Error("actionlint returned an invalid diagnostic");
+    const candidate = item;
+    if (typeof candidate.message !== "string" || typeof candidate.line !== "number" || typeof candidate.column !== "number" || typeof candidate.kind !== "string") {
+      throw new Error("actionlint returned an incomplete diagnostic");
+    }
+    return {
+      message: candidate.message,
+      line: candidate.line,
+      column: candidate.column,
+      kind: candidate.kind
+    };
+  });
+}
+
 // src/model.ts
 function isRecord3(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -18316,6 +18386,19 @@ function broadCopyBeforeDependencyInstall(source) {
 
 // src/rules/definitions.ts
 var RULES = [
+  {
+    id: "depotci.workflow.actionlint",
+    category: "correctness",
+    severity: Severity.Medium,
+    confidence: Confidence.High,
+    title: { singular: "Depot workflow fails static validation", plural: "Depot workflows fail static validation" },
+    summary: (count) => `actionlint found ${count} invalid or inconsistent Depot workflow configuration${count === 1 ? "" : "s"}.`,
+    whyItMatters: "Invalid workflow syntax, expressions, events, or job wiring can prevent CI from starting or make it behave differently than intended.",
+    impact: "Required validation, release, or deployment work may be skipped or fail before its jobs execute.",
+    recommendation: "Correct the reported actionlint diagnostic and rerun workflow validation.",
+    complexity: "small",
+    tags: ["workflow", "correctness", "actionlint"]
+  },
   {
     id: "depotci.workflow.parse-error",
     category: "correctness",
@@ -19520,6 +19603,23 @@ async function analyzeRepository(ctx, discovery, repository) {
     data: { error: failure2.message, column: failure2.column }
   }));
   for (const workflow of discovery.workflows) {
+    for (const diagnostic of await runActionlint(workflow.path, workflow.source, depotRunnerLabels(workflow.source))) {
+      const line = Math.max(1, diagnostic.line);
+      detections.push({
+        ruleId: "depotci.workflow.actionlint",
+        subject: workflow.path,
+        groupKey: `depotci.workflow.actionlint:${workflow.path}`,
+        file: workflow.path,
+        line,
+        snippet: workflow.source.split(/\r?\n/)[line - 1]?.trim() ?? "",
+        label: diagnostic.message,
+        data: {
+          actionlintVersion: ACTIONLINT_VERSION,
+          kind: diagnostic.kind,
+          column: diagnostic.column
+        }
+      });
+    }
     detections.push(...analyzeActions(workflow));
     detections.push(...analyzeJobs(workflow));
     detections.push(...analyzeCaching(workflow, repository));
@@ -19532,6 +19632,9 @@ async function analyzeRepository(ctx, discovery, repository) {
   }
   reportPositives(ctx, discovery.workflows, detections);
   reportReview(ctx, discovery, eligibleDetections);
+}
+function depotRunnerLabels(source) {
+  return [...new Set([...source.matchAll(/\bdepot-[a-z0-9][a-z0-9._-]*/gi)].map((match) => match[0].toLowerCase()))].sort();
 }
 async function changeLocalDetections(ctx, detections) {
   if (ctx.change === null || ctx.change.scanMode === "all") {
@@ -19809,7 +19912,7 @@ function trimTrailingPeriod(value) {
 }
 
 // src/context.ts
-import { readFile as readFile6 } from "node:fs/promises";
+import { readFile as readFile7 } from "node:fs/promises";
 import { join as join5 } from "node:path";
 var LOCKFILE_NAMES = /* @__PURE__ */ new Set([
   "package-lock.json",
@@ -19824,7 +19927,7 @@ var LOCKFILE_NAMES = /* @__PURE__ */ new Set([
 async function inspectRepository(repoPath, files) {
   const dockerfilePaths = files.filter(isDockerfilePath);
   const dockerfiles = await Promise.all(
-    dockerfilePaths.map(async (path) => ({ path, source: await readFile6(join5(repoPath, path), "utf8") }))
+    dockerfilePaths.map(async (path) => ({ path, source: await readFile7(join5(repoPath, path), "utf8") }))
   );
   return {
     files: new Set(files),
@@ -19841,7 +19944,7 @@ function isDockerfilePath(path) {
 }
 
 // src/discover.ts
-import { readFile as readFile7, readdir as readdir4 } from "node:fs/promises";
+import { readFile as readFile8, readdir as readdir4 } from "node:fs/promises";
 import { join as join6, sep as sep2 } from "node:path";
 var MAX_DISCOVERY_FILES = 5e3;
 var SKIPPED_DIRECTORIES = /* @__PURE__ */ new Set([
@@ -19862,7 +19965,7 @@ async function discoverDepotWorkflows(repoPath) {
   const workflows = [];
   const failures = [];
   for (const path of candidates) {
-    const source = await readFile7(join6(repoPath, path), "utf8");
+    const source = await readFile8(join6(repoPath, path), "utf8");
     const result = parseDepotWorkflow(path, source);
     if (result.kind === "workflow") {
       workflows.push(result.workflow);
