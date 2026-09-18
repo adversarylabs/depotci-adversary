@@ -100,7 +100,7 @@ Depot CI workflows should be as hardened as production CD: trust boundaries, pin
 **Public examples of the bad pattern:**
   - https://docs.github.com/en/actions/using-jobs/assigning-permissions-to-jobs
   - https://github.com/ossf/scorecard
-  - https://github.com/adversarylabs/adversary — release.yml least-privilege pattern
+  - https://github.com/doomerlabs/adversary — release.yml least-privilege pattern
 
 ---
 ### 4. `depot.pull-request.untrusted-code` — PR workflows execute untrusted build scripts
@@ -162,7 +162,7 @@ Depot CI workflows should be as hardened as production CD: trust boundaries, pin
 
 **Public examples of the bad pattern:**
   - https://docs.github.com/en/actions/deployment/targeting-different-environments/using-environments-for-deployment
-  - https://github.com/adversarylabs/adversary — environment: release pattern
+  - https://github.com/doomerlabs/adversary — environment: release pattern
   - https://docs.depot.dev/
 
 ---
@@ -309,7 +309,7 @@ Depot CI workflows should be as hardened as production CD: trust boundaries, pin
 
 **Public examples of the bad pattern:**
   - https://docs.github.com/en/actions/using-jobs/using-concurrency
-  - https://github.com/adversarylabs/adversary
+  - https://github.com/doomerlabs/adversary
   - https://docs.depot.dev/
 
 ---
@@ -329,7 +329,7 @@ Depot CI workflows should be as hardened as production CD: trust boundaries, pin
 **False-positive guards.** Internal non-distributed builds.
 
 **Public examples of the bad pattern:**
-  - https://github.com/adversarylabs/adversary — release contract
+  - https://github.com/doomerlabs/adversary — release contract
   - https://github.com/sigstore/cosign
   - https://slsa.dev/
 
